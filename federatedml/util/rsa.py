@@ -58,8 +58,6 @@ class RsaModel(ModelBase):
             {'schema': data_inst.schema, 'header': data_inst.schema.get('header', [])},
             data_table_namespace=persistent_table._namespace, data_table_name=persistent_table._name)
         
-        version_log = "[AUTO] save data at %s." % datetime.datetime.now()
-        version_control.save_version(name=persistent_table._name, namespace=persistent_table._namespace, version_log=version_log)
         return persistent_table
 
 

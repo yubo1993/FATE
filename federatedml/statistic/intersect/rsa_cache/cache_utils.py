@@ -32,14 +32,14 @@ LOGGER = log_utils.getLogger()
 '''
 
 '''
-return: a dictionary contains table_name and namespace, 
+return: a list contains dict of table_name and namespace, 
 '''
 def host_get_current_verison(host_party_id, id_type, encrypt_type, tag, timeout=600):
     return get_current_version(id_type, encrypt_type, tag, host_party_id, timeout=timeout)
 
 
 '''
-return: a dictionary contains table_name and namespace, 
+return: a list contains dict of table_name and namespace, 
 '''
 def guest_get_current_version(host_party_id, guest_party_id, id_type, encrypt_type, tag, timeout=600):
     return get_current_version(id_type, encrypt_type, tag, host_party_id, guest_party_id=guest_party_id, timeout=timeout)
@@ -174,7 +174,7 @@ def get_current_version(id_type, encrypt_type, tag, host_party_id, guest_party_i
     
     if table_info.get('table_name'):
         LOGGER.info('table exists, namepsace={}, version={}.'.format(table_info.get('namespace'), table_info.get('table_name')))
-        return table_info
+        return parse_table_list(table_info)
     
     redis_adapter = RedisAdaptor()
     cache_job = redis_adapter.get(config['namespace'])
@@ -190,13 +190,30 @@ def get_current_version(id_type, encrypt_type, tag, host_party_id, guest_party_i
             table_info = get_table_info_without_create(table_config=config)
             if table_info.get('table_name'):
                 LOGGER.info('after cache job finish, get table info, namepsace={}, version={}.'.format(table_info.get('namespace'), table_info.get('table_name')))
-                return table_info
+                return parse_table_list(table_info)
             else:
                 LOGGER.info('after cache job finish, table not exist, namepsace={}.'.format(config['namespace']))
                 return None
         time.sleep(1)
     LOGGER.info('wait cache job timeout, get version fail, namepsace={}.'.format(config['namespace']))
     return None
+
+
+def parse_table_list(table_info):
+    table_list = []
+    version = table_info.get('table_name')
+    namespace = table_info.get('namespace')
+    parts = version.split('#')
+    if len(parts) > 1:
+        part_count = int(parts[1])
+        partno = 0
+        while partno < part_count:
+            table_name = version + '#' + str(partno)
+            table_list.append({'table_name': table_name, 'namespace': namespace})
+            partno += 1
+    else:
+        table_list.append(table_info)
+    return table_list
 
 
 def save_data(data_inst, namespace, version):
