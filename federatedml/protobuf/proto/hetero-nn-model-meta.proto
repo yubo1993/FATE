@@ -17,15 +17,28 @@
 syntax = "proto3";
 
 package com.webank.ai.fate.core.mlmodel.buffer;
-option java_outer_classname = "OneHotParamProto";
+option java_outer_classname = "HeteroNNModelMetaProto";
 
-
-message ColsMap {
-    repeated string values = 1;
-    repeated string encoded_variables = 2;
-    string data_type = 3;
+message Optimizer {
+    string optimizer = 1;
+    string args = 2;
 }
 
-message OneHotParam {
-    map<string, ColsMap> col_map = 1;
+message PredictParam {
+    double threshold = 1;
+}
+
+message HeteroNNModelMeta {
+    string task_type = 1;
+    string config_type = 2;
+    repeated string bottom_nn_define = 3;
+    string interactive_layer_define = 4;
+    repeated string top_nn_define = 5;
+    int32 batch_size = 6;
+    int32 epochs = 7;
+    string early_stop = 8;
+    double tol = 9;
+    repeated string metrics = 10;
+    Optimizer optimizer = 11;
+    string loss = 12;
 }

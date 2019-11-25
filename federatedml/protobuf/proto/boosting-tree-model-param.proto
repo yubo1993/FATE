@@ -1,38 +1,40 @@
 syntax = "proto3";
 
 message NodeParam {
-    int32 id = 1;
-    string sitename = 2;
-    int32 fid = 3;
-    double bid = 4;
-    double weight = 5;
-    bool is_leaf = 6;
-    int32 left_nodeid = 7;
-    int32 right_nodeid = 8;
-	int32 missing_dir = 9;
+    int32 id = 1;            // 树节点编号
+    string sitename = 2;     // 域名， ":".join([role, str(party_id)])
+    int32 fid = 3;           // 分裂点对应的feature index
+    double bid = 4;          // 分裂点对应的分裂值
+    double weight = 5;       // 节点权重
+    bool is_leaf = 6;        // 是否为叶子节点
+    int32 left_nodeid = 7;   // 左儿子编号
+    int32 right_nodeid = 8;  // 右儿子编号
+	int32 missing_dir = 9;   // 缺失值位于左边还是右边
 }
 
 message DecisionTreeModelParam {
     repeated NodeParam tree_ = 1;
-    map<int32, double> split_maskdict = 2;
-    map<int32, int32> missing_dir_maskdict = 3;
+    map<int32, double> split_maskdict = 2;         // 分裂点实际对应的分裂值，通过树节点编号索引
+    map<int32, int32> missing_dir_maskdict = 3;    // 分裂点实际对应的缺失值方向，通过树节点编号索引
 }
 
 message FeatureImportanceInfo {
-	string sitename = 1;
-	int32 fid = 2;
-	double importance = 3;
+	string sitename = 1;                           // 域名
+	int32 fid = 2;                                 // feature index
+	double importance = 3;                         // 特征重要性
 }
 
 message BoostingTreeModelParam {
-	int32 tree_num = 1;
+	int32 tree_num = 1;                                       // boost的数量
     repeated DecisionTreeModelParam trees_ = 2;
-    repeated double init_score = 3;
+    repeated double init_score = 3;                           // 预测的初始化值，目前二分类多分类都是0，
+                                                                 回归是均值或者中位数
     repeated double losses = 4;
-    int32 tree_dim = 5;
-    int32 num_classes = 6;
-    repeated string classes_ = 7;
+    int32 tree_dim = 5;                                       // 树的维度，对于二分类回归是1，
+                                                                 但是多分类是类别数
+    int32 num_classes = 6;                                    // 分类问题：几分类
+    repeated string classes_ = 7;                             // 分类问题：各个类别的值
 	repeated FeatureImportanceInfo feature_importances = 8;
-	map<int32, string> feature_name_fid_mapping = 9;
+	map<int32, string> feature_name_fid_mapping = 9;          // feature_name: index映射表
 }
 

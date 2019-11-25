@@ -17,15 +17,15 @@
 syntax = "proto3";
 
 package com.webank.ai.fate.core.mlmodel.buffer;
-option java_outer_classname = "OneHotParamProto";
+option java_outer_classname = "NNModelParamProto";
 
-
-message ColsMap {
-    repeated string values = 1;
-    repeated string encoded_variables = 2;
-    string data_type = 3;
+message HeteroNNModelParam {
+    int32 iter_epoch = 1;
+    bytes bottom_saved_model_bytes = 2;
+    bytes interactive_save_model_bytes = 3;
+    bytes top_saved_model_bytes = 4;
+    repeated double loss_history = 5;
+    bool is_converged = 6;
+    repeated string header = 7;
 }
 
-message OneHotParam {
-    map<string, ColsMap> col_map = 1;
-}

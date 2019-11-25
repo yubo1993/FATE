@@ -22,10 +22,12 @@ import zipfile
 import numpy as np
 import tensorflow as tf
 from tensorflow.python.keras.backend import set_session
+from tensorflow.python.keras.backend import gradients
 
 from arch.api.utils import log_utils
 from federatedml.framework.weights import OrderDictWeights, Weights
 from federatedml.nn.homo_nn.nn_model import NNModel, DataConverter
+from federatedml.nn import hetero_nn
 
 Logger = log_utils.getLogger()
 
@@ -48,7 +50,8 @@ def _zip_dir_as_bytes(path):
 
 def _compile_model(model, loss, optimizer, metrics):
     optimizer_instance = getattr(tf.keras.optimizers, optimizer.optimizer)(**optimizer.kwargs)
-    losses = getattr(tf.keras.losses, loss)
+    # losses = getattr(tf.keras.losses, loss)
+    losses = getattr(hetero_nn.losses, loss)
     model.compile(loss=losses,
                   optimizer=optimizer_instance,
                   metrics=metrics)
@@ -70,7 +73,11 @@ def build_keras(nn_define, loss, optimizer, metrics, **kwargs):
     import json
     nn_define_json = json.dumps(nn_define)
 
-    sess = _init_session()
+    if "sess" in kwargs:
+        sess = kwargs.get("sess")
+    else:
+        sess = _init_session()
+
     model = _load_model(nn_struct_json=nn_define_json)
     model = _compile_model(model=model,
                            loss=loss,
@@ -79,8 +86,10 @@ def build_keras(nn_define, loss, optimizer, metrics, **kwargs):
     return KerasNNModel(sess, model)
 
 
-def from_keras_sequential_model(model, loss, optimizer, metrics):
-    sess = _init_session()
+def from_keras_sequential_model(model, loss, optimizer, metrics, sess=None):
+    if not sess:
+        sess = _init_session()
+
     model = _compile_model(model=model,
                            loss=loss,
                            optimizer=optimizer,
@@ -98,6 +107,8 @@ class KerasNNModel(NNModel):
         self._model: tf.keras.Sequential = model
         self._trainable_weights = {self._trim_device_str(v.name): v for v in self._model.trainable_weights}
 
+        self._sess.run(tf.initialize_all_variables())
+
     @staticmethod
     def _trim_device_str(name):
         return name.split("/")[0]
@@ -108,6 +119,17 @@ class KerasNNModel(NNModel):
     def set_model_weights(self, weights: Weights):
         unboxed = weights.unboxed
         self._sess.run([tf.assign(v, unboxed[name]) for name, v in self._trainable_weights.items()])
+
+    def get_gradients(self, X, y):
+        from federatedml.nn.hetero_nn import losses
+
+        y_true = tf.placeholder(shape=self._model.output.shape,
+                                dtype=self._model.output.dtype)
+
+        loss_fn = getattr(losses, self._model.loss_functions[0].fn.__name__)(y_true, self._model.output)
+        gradient = gradients(loss_fn, self._model.input)
+        return self._sess.run(gradient, feed_dict={self._model.input: X,
+                                                   y_true: y})
 
     def train(self, data: tf.keras.utils.Sequence, **kwargs):
         epochs = 1
@@ -143,8 +165,9 @@ class KerasNNModel(NNModel):
         return model_bytes
 
     @staticmethod
-    def restore_model(model_bytes):  # todo: restore optimizer to support incremental learning
-        sess = _init_session()
+    def restore_model(model_bytes, sess=None):  # todo: restore optimizer to support incremental learning
+        if not sess:
+            sess = _init_session()
         with tempfile.TemporaryDirectory() as tmp_path:
             with io.BytesIO(model_bytes) as bytes_io:
                 with zipfile.ZipFile(bytes_io, 'r', zipfile.ZIP_DEFLATED) as f:

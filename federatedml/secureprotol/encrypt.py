@@ -114,7 +114,7 @@ class Encrypt(object):
             else:
                 encrypted_term = self.encrypt_list(row)
                 encrypt_row.append(encrypted_term)
-        return np.array(encrypt_row, dtype=np.float64)
+        return np.array(encrypt_row)
 
 
 class RsaEncrypt(Encrypt):
