@@ -1,6 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-
 #
 #  Copyright 2019 The FATE Authors. All Rights Reserved.
 #
@@ -16,7 +13,6 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
-
 from .transfer_class.cross_validation_transfer_variable import CrossValidationTransferVariable
 from .transfer_class.hetero_decision_tree_transfer_variable import HeteroDecisionTreeTransferVariable
 from .transfer_class.hetero_dnn_lr_transfer_variable import HeteroDNNLRTransferVariable
