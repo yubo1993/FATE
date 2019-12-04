@@ -18,6 +18,8 @@
 #
 
 from numpy import random
+from arch.api import session
+from federatedml.nn.hetero_nn.backend.ops import HeteroNNTensor
 
 
 class RandomNumberGenerator(object):
@@ -30,5 +32,14 @@ class RandomNumberGenerator(object):
     def generate_random_number(self, shape):
         return self.generator(loc=self.loc, scale=self.scale, size=shape)
 
+    def fast_generate_random_number(self, shape, partition=10):
+        generator = self.generator
+        loc = self.loc
+        scale = self.scale
 
+        tb = session.parallelize([None for i in range(shape[0])], include_key=False, partition=partition)
+
+        tb = tb.mapValues(lambda val: generator(loc, scale, shape[1:]))
+
+        return HeteroNNTensor(tb_obj=tb)
 

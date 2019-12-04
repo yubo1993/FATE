@@ -18,18 +18,18 @@
 #
 
 
-from federatedml.nn.hetero_nn.hetero_nn_base import HeteroNNBase
-from federatedml.nn.hetero_nn.model.hetero_nn_bottom_model import HeteroNNBottomModel
-from federatedml.nn.hetero_nn.interactive.interactive_layer import InteractiveHostDenseLayer
-from federatedml.framework.hetero.procedure import batch_generator
-from federatedml.protobuf.generated.hetero_nn_model_meta_pb2 import HeteroNNModelMeta, Optimizer
-from federatedml.protobuf.generated.hetero_nn_model_param_pb2 import HeteroNNModelParam
-
 import numpy as np
 
+from arch.api.utils import log_utils
+from federatedml.framework.hetero.procedure import batch_generator
+from federatedml.nn.hetero_nn.backend.model_builder import model_builder
+from federatedml.nn.hetero_nn.hetero_nn_base import HeteroNNBase
+from federatedml.protobuf.generated.hetero_nn_model_meta_pb2 import HeteroNNModelMeta
+from federatedml.protobuf.generated.hetero_nn_model_param_pb2 import HeteroNNModelParam
 
+LOGGER = log_utils.getLogger()
 MODELMETA = "HeteroNNHostMeta"
-MODELParam= "HeteroNNGHostParam"
+MODELPARAM = "HeteroNNHostParam"
 
 
 class HeteroNNHost(HeteroNNBase):
@@ -37,44 +37,49 @@ class HeteroNNHost(HeteroNNBase):
         super(HeteroNNHost, self).__init__()
 
         self.batch_generator = batch_generator.Host()
+        self.model = None
+
+        self.input_shape = None
 
     def _init_model(self, hetero_nn_param):
         super(HeteroNNHost, self)._init_model(hetero_nn_param)
+        self.model = model_builder("host", self.hetero_nn_param)
+        self.model.set_transfer_variable(self.transfer_variable)
 
     def _load_model(self, model_dict):
-        pass
+        model_dict = list(model_dict["model"].values())[0]
+        param = model_dict.get(MODELPARAM)
+        meta = model_dict.get(MODELMETA)
+
+        self._restore_model_meta(meta)
+        self._restore_model_param(param)
 
     def predict(self, data_inst):
         test_x = self._load_data(data_inst)
 
-        guest_bottom_output = self.bottom_model.predict(test_x)
-        self.interactive_model.forward(guest_bottom_output)
-
-    def _build_bottom_model(self):
-        self.bottom_model = HeteroNNBottomModel(input_shape=self.input_shape,
-                                                sess=self.sess,
-                                                optimizer=self.optimizer,
-                                                layer_config=self.bottom_nn_define,
-                                                model_builder=self.model_builder)
-
-    def _build_interactive_model(self):
-        self.interactive_model = InteractiveHostDenseLayer(self.hetero_nn_param)
-        self.set_interactive_transfer_variable()
-
-    def _build_model(self):
-        self.sess = self._init_session()
-        self._build_bottom_model()
-        self._build_interactive_model()
+        self.model.predict(test_x)
 
     def fit(self, data_inst, validate_data):
         self.prepare_batch_data(self.batch_generator, data_inst)
-        self._build_model()
 
-        while self.cur_epoch < self.epochs:
+        cur_epoch = 0
+
+        while cur_epoch < self.epochs:
             for batch_idx in range(len(self.data_x)):
-                self.train_batch(self.data_x[batch_idx], self.cur_epoch, batch_idx)
+                self.model.train(self.data_x[batch_idx], cur_epoch, batch_idx)
 
-            self.cur_epoch += 1
+                self.reset_flowid()
+                self.model.evaluate(self.data_x[batch_idx], cur_epoch, batch_idx)
+                self.recovery_flowid()
+
+            is_converge = self.transfer_variable.is_converge.get(idx=0,
+                                                                 suffix=(cur_epoch,))
+
+            if is_converge:
+                LOGGER.debug("Training process is converged in epoch {}".format(cur_epoch))
+                break
+
+            cur_epoch += 1
 
     def prepare_batch_data(self, batch_generator, data_inst):
         batch_generator.initialize_batch_generator(data_inst)
@@ -84,12 +89,7 @@ class HeteroNNHost(HeteroNNBase):
             batch_x = self._load_data(batch_data)
             self.data_x.append(batch_x)
 
-    def train_batch(self, x, epoch, batch_idx):
-        host_bottom_output = self.bottom_model.forward(x)
-        self.interactive_model.forward(host_bottom_output, epoch, batch_idx)
-
-        host_gradient = self.interactive_model.backward(epoch, batch_idx)
-        self.bottom_model.backward(x, host_gradient)
+        self.set_partition(data_inst)
 
     def _load_data(self, data_inst):
         batch_x = []
@@ -105,30 +105,13 @@ class HeteroNNHost(HeteroNNBase):
 
     def _get_model_meta(self):
         model_meta = HeteroNNModelMeta()
-        model_meta.config_type = self.config_type
-
-        if self.config_type == "nn":
-            for layer in self.bottom_nn_define:
-                model_meta.bottom_nn_define.append(json.dumps(layer))
-
-            for layer in self.top_nn_define:
-                model_meta.top_nn_define.append(json.dumps(layer))
-        elif self.config_type == "keras":
-            model_meta.bottom_nn_define.append(json.dumps(self.bottom_nn_define))
-            model_meta.top_nn_define.append(json.dumps(self.top_nn_define))
-
-        model_meta.interactive_layer_define = json.dumps(self.interactive_layer_define)
         model_meta.batch_size = self.batch_size
-        model_meta.epochs = self.epochs
-        model_meta.early_stop = self.early_stop
-        model_meta.tol = self.tol
+        model_meta.hetero_nn_model_meta.CopyFrom(self.model.get_hetero_nn_model_meta())
 
-        for metric in self.metrics:
-            model_meta.metrics.append(metric)
+        return model_meta
 
     def _get_model_param(self):
         model_param = HeteroNNModelParam()
-        model_param.bottom_saved_model_bytes = self.bottom_model.export_model()
-        model_param.interactive_save_model_bytes = self.interactive_model.saved_model_bytes()
+        model_param.hetero_nn_model_param.CopyFrom(self.model.get_hetero_nn_model_param())
 
-
+        return model_param

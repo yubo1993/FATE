@@ -16,46 +16,50 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
-from federatedml.nn.homo_nn.zoo.nn import build_nn_model
-from federatedml.nn.homo_nn.backend.tf_keras.nn_model import KerasNNModel
-from federatedml.nn.hetero_nn.util.data_generator import KerasSequenceData
+
+from arch.api.utils import log_utils
+
+LOGGER = log_utils.getLogger()
 
 
 class HeteroNNTopModel(object):
-    def __init__(self, input_shape=None, sess=None, loss=None, optimizer="SGD", metrics=None, model_builder=None, layer_config=None):
-        self._keras_model = model_builder(input_shape=input_shape,
-                                          nn_define=layer_config,
-                                          optimizer=optimizer,
-                                          loss=loss,
-                                          metrics=metrics,
-                                          sess=sess)
+    def __init__(self, input_shape=None, sess=None, loss=None, optimizer="SGD", metrics=None, model_builder=None,
+                 layer_config=None):
+        self.sess = sess
 
+        self._model = model_builder(input_shape=input_shape,
+                                    nn_define=layer_config,
+                                    optimizer=optimizer,
+                                    loss=loss,
+                                    metrics=metrics,
+                                    sess=sess)
 
-        self.gradient = None
+        self.data_converter = None
+
+    def set_data_converter(self, data_converter):
+        self.data_converter = data_converter
 
     def train_and_get_backward_gradient(self, x, y):
-        gradients = self._keras_model.get_gradients(x, y)
+        LOGGER.debug("top model weight is {}".format(self._model._model.get_weights()))
+        gradients = self._model.get_gradients(x, y)
 
-        seq_data = KerasSequenceData(x, y)
-        self._keras_model.train(seq_data)
-
-        return gradients
-
-    """
-    def train(self, input_data):
-        gradients = self._keras_model.get_gradients(input_data.X, input_data.y)
-        self._keras_model.train(input_data)
+        data = self.data_converter.convert_data(x, y)
+        self._model.train(data)
 
         return gradients
-    """
 
     def predict(self, input_data):
-        output_data = self._keras_model.predict(input_data)
+        output_data = self._model.predict(input_data)
 
         return output_data
 
-    def export_model(self):
-        return self._keras_model.export_model()
+    def evaluate(self, x, y):
+        data = self.data_converter.convert_data(x, y)
 
-    def restore_mode(self, sess, model_bytes):
-        self._keras_model = self._keras_model.restore_model(model_bytes, sess)
+        return self._model.evaluate(data)
+
+    def export_model(self):
+        return self._model.export_model()
+
+    def restore_model(self, model_bytes):
+        self._model = self._model.restore_model(model_bytes, self.sess)

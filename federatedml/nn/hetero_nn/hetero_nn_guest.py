@@ -16,21 +16,17 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
-from federatedml.model_base import ModelBase
 from federatedml.optim.convergence import converge_func_factory
 from federatedml.nn.hetero_nn.hetero_nn_base import HeteroNNBase
-from federatedml.nn.hetero_nn.model.hetero_nn_bottom_model import HeteroNNBottomModel
-from federatedml.nn.hetero_nn.model.hetero_nn_top_model import HeteroNNTopModel
 from federatedml.framework.hetero.procedure import batch_generator
-from federatedml.nn.hetero_nn.interactive.interactive_layer import InterActiveGuestDenseLayer
-from federatedml.protobuf.generated.hetero_nn_model_meta_pb2 import HeteroNNModelMeta, Optimizer
-from federatedml.protobuf.generated.hetero_nn_model_param_pb2 import HeteroNNModelParam
+from federatedml.protobuf.generated.hetero_nn_model_meta_pb2 import HeteroNNMeta
+from federatedml.protobuf.generated.hetero_nn_model_param_pb2 import HeteroNNParam
+from federatedml.nn.hetero_nn.backend.model_builder import model_builder
+from federatedml.util import consts
 from arch.api.utils import log_utils
 from arch.api import session
 import numpy as np
-import json
 
-import tensorflow as tf
 
 LOGGER = log_utils.getLogger()
 MODELMETA = "HeteroNNGuestMeta"
@@ -41,9 +37,6 @@ class HeteroNNGuest(HeteroNNBase):
     def __init__(self):
         super(HeteroNNGuest, self).__init__()
         self.task_type = None
-
-        self.top_model = None
-
         self.converge_func = None
 
         self.batch_generator = batch_generator.Guest()
@@ -52,63 +45,65 @@ class HeteroNNGuest(HeteroNNBase):
         self.model_builder = None
         self.label_dict = {}
 
+        self.model = None
         self.history_loss = []
         self.iter_epoch = 0
         self.num_label = 2
+
+        self.input_shape = None
 
     def _init_model(self, hetero_nn_param):
         super(HeteroNNGuest, self)._init_model(hetero_nn_param)
 
         self.task_type = hetero_nn_param.task_type
         self.converge_func = converge_func_factory(self.early_stop, self.tol)
-
-    def _build_bottom_model(self):
-        self.bottom_model = HeteroNNBottomModel(input_shape=self.input_shape,
-                                                sess=self.sess,
-                                                optimizer=self.optimizer,
-                                                layer_config=self.bottom_nn_define,
-                                                model_builder=self.model_builder)
-
-    def _build_top_model(self, input_shape):
-        self.top_model = HeteroNNTopModel(input_shape=input_shape,
-                                          sess=self.sess,
-                                          optimizer=self.optimizer,
-                                          layer_config=self.top_nn_define,
-                                          loss=self.loss,
-                                          metrics=self.metrics,
-                                          model_builder=self.model_builder)
-
-    def _build_interactive_model(self):
-        self.interactive_model = InterActiveGuestDenseLayer(self.hetero_nn_param,
-                                                            self.interactive_layer_define,
-                                                            sess=self.sess)
-
-        self.set_interactive_transfer_variable()
-
-    def _build_model(self):
-        self.sess = self._init_session()
-        self._build_bottom_model()
-        self._build_interactive_model()
-
-        # self._build_top_model()
+        self.model = model_builder("guest", self.hetero_nn_param)
+        self.model.set_transfer_variable(self.transfer_variable)
 
     def fit(self, data_inst, validate_data):
         self.prepare_batch_data(self.batch_generator, data_inst)
-        self._build_model()
 
-        while self.cur_epoch < self.epochs:
-            LOGGER.debug("cur epoch is {}".format(self.cur_epoch))
+        if not self.input_shape:
+            self.model.set_empty()
+
+        cur_epoch = 0
+        while cur_epoch < self.epochs:
+            LOGGER.debug("cur epoch is {}".format(cur_epoch))
+            epoch_loss = 0
+
             for batch_idx in range(len(self.data_x)):
-                self.train_batch(self.data_x[batch_idx], self.data_y[batch_idx], self.cur_epoch, batch_idx)
+                self.model.train(self.data_x[batch_idx], self.data_y[batch_idx], cur_epoch, batch_idx)
 
-            self.cur_epoch += 1
+                self.reset_flowid()
+                metrics = self.model.evaluate(self.data_x[batch_idx], self.data_y[batch_idx], cur_epoch, batch_idx)
+                self.recovery_flowid()
+
+                batch_loss = metrics["loss"]
+
+                epoch_loss += batch_loss
+
+            epoch_loss /= len(self.data_x)
+            self.history_loss.append(epoch_loss)
+
+            is_converge = self.converge_func.is_converge(epoch_loss)
+            self.transfer_variable.is_converge.remote(is_converge,
+                                                      role=consts.HOST,
+                                                      idx=0,
+                                                      suffix=(cur_epoch,))
+
+            if is_converge:
+                LOGGER.debug("Training process is converged in epoch {}".format(cur_epoch))
+                break
+
+            cur_epoch += 1
+
+        if cur_epoch == self.epochs:
+            LOGGER.debug("Training process reach max training epochs {} and not converged".format(self.epochs))
 
     def predict(self, data_inst):
         keys, test_x, test_y = self._load_data(data_inst)
 
-        guest_bottom_output = self.bottom_model.predict(test_x)
-        interactive_output = self.interactive_model.forward(guest_bottom_output)
-        preds = self.top_model.predict(interactive_output)
+        preds = self.model.predict(test_x)
 
         predict_tb = session.parallelize(zip(keys, preds), include_key=True)
         if self.task_type == "regression":
@@ -124,72 +119,42 @@ class HeteroNNGuest(HeteroNNBase):
                                                                      range(predict.shape[0])])])
 
             else:
+                threshold = self.predict_param.threshold
                 result = data_inst.join(predict_tb,
                                         lambda inst, predict: [inst.label,
-                                                               1 if predict[0] > self.predict_param.threshold else 0,
+                                                               1 if predict[0] > threshold else 0,
                                                                predict[0],
                                                                {"0": 1 - predict[0],
                                                                 "1": predict[0]}])
 
         return result
 
-    def train_batch(self, x, y, epoch, batch_idx):
-        guest_bottom_output = self.bottom_model.forward(x)
-        interactive_output = self.interactive_model.forward(guest_bottom_output, epoch, batch_idx)
-
-        if self.top_model is None:
-            self._build_top_model(interactive_output.shape[1:])
-
-        gradients = self.top_model.train_and_get_backward_gradient(interactive_output, y)
-
-        guest_backward = self.interactive_model.backward(gradients, epoch, batch_idx)
-        self.bottom_model.backward(x, guest_backward)
-
     def export_model(self):
         return {MODELMETA: self._get_model_meta(),
                 MODELParam: self._get_model_param()}
 
     def _get_model_meta(self):
-        model_meta = HeteroNNModelMeta()
+        model_meta = HeteroNNMeta()
         model_meta.task_type = self.task_type
-        model_meta.config_type = self.config_type
-        model_meta.loss = self.loss
 
-        if self.config_type == "nn":
-            for layer in self.bottom_nn_define:
-                model_meta.bottom_nn_define.append(json.dumps(layer))
-
-            for layer in self.top_nn_define:
-                model_meta.top_nn_define.append(json.dumps(layer))
-        elif self.config_type == "keras":
-            model_meta.bottom_nn_define.append(json.dumps(self.bottom_nn_define))
-            model_meta.top_nn_define.append(json.dumps(self.top_nn_define))
-
-        model_meta.interactive_layer_define = json.dumps(self.interactive_layer_define)
         model_meta.batch_size = self.batch_size
         model_meta.epochs = self.epochs
         model_meta.early_stop = self.early_stop
         model_meta.tol = self.tol
 
-        for metric in self.metrics:
-            model_meta.metrics.append(metric)
+        model_meta.hetero_nn_model_meta.CopyFrom(self.model.get_hetero_nn_model_meta())
 
-        optimizer = Optimizer()
-        if isinstance(self.optimizer, str):
-            optimizer.optimizer = self.optimizer
-        else:
-            optimizer.args = json.dumps(self.optimizer)
-
-        model_meta.optimizer = optimizer
-        for loss in self.history_loss:
-            model_meta.append(loss)
+        return model_meta
 
     def _get_model_param(self):
-        model_param = HeteroNNModelParam()
+        model_param = HeteroNNParam()
         model_param.iter_epoch = self.iter_epoch
-        model_param.bottom_saved_model_bytes = self.bottom_model.export_model()
-        model_param.top_saved_model_bytes = self.top_model.export_model()
-        model_param.interactive_save_model_bytes = self.interactive_model.saved_model_bytes()
+        model_param.hetero_nn_model_param.CopyFrom(self.model.get_hetero_nn_model_param())
+
+        for loss in self.history_loss:
+            model_param.history_loss.append(loss)
+
+        return model_param
 
     def prepare_batch_data(self, batch_generator, data_inst):
         batch_generator.initialize_batch_generator(data_inst, self.batch_size)
@@ -202,6 +167,7 @@ class HeteroNNGuest(HeteroNNBase):
             self.data_keys.append(keys)
 
         self._convert_label()
+        self.set_partition(data_inst)
 
     def _load_data(self, data_inst):
         keys = []
@@ -213,7 +179,10 @@ class HeteroNNGuest(HeteroNNBase):
             batch_y.append(inst.label)
 
             if self.input_shape is None:
-                self.input_shape = inst.features.shape
+                try:
+                    self.input_shape = inst.features.shape
+                except AttributeError:
+                    self.input_shape = 0
 
         batch_x = np.asarray(batch_x)
         batch_y = np.asarray(batch_y)
@@ -247,3 +216,12 @@ class HeteroNNGuest(HeteroNNBase):
             transform_y.append(new_batch_y)
 
         self.data_y = transform_y
+
+    """
+    def _restore_model_meta(self, meta):
+        super(HeteroNNGuest)._restore_model_meta(meta)
+        self.model.set_hetero_nn_model_meta(meta.hetero_nn_model_meta)
+    """
+
+    def _restore_model_param(self, param):
+        super(HeteroNNGuest)._restore_model_param(param)
