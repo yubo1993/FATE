@@ -57,6 +57,7 @@ class HeteroSecureBoostingTreeHost(BoostingTree):
         self.bin_sparse_points = None
         self.data_bin = None
         self.role = consts.HOST
+        self.cur_best_model = None
 
     def convert_feature_to_bin(self, data_instance):
         LOGGER.info("convert feature to bins")
@@ -97,6 +98,13 @@ class HeteroSecureBoostingTreeHost(BoostingTree):
                                                          suffix=(num_round,))
         return stop_flag
 
+    def get_cur_model(self):
+        meta_name, meta_protobuf = self.get_model_meta()
+        param_name, param_protobuf = self.get_model_param()
+        return {meta_name: meta_protobuf,
+                param_name: param_protobuf
+                }
+
     def fit(self, data_inst, validate_data=None):
         LOGGER.info("begin to train secureboosting guest model")
         self.gen_feature_fid_mapping(data_inst.schema)
@@ -106,6 +114,8 @@ class HeteroSecureBoostingTreeHost(BoostingTree):
         self.sync_tree_dim()
 
         validation_strategy = self.init_validation_strategy(data_inst, validate_data)
+        if self.early_stopping > 0:
+            validation_strategy.sync_status = True
 
         for i in range(self.num_trees):
             # n_tree = []
@@ -130,9 +140,15 @@ class HeteroSecureBoostingTreeHost(BoostingTree):
             # self.trees_.append(n_tree)
 
             if validation_strategy:
+                LOGGER.debug('host running validation')
                 validation_strategy.validate(self, i)
 
-            if self.n_iter_no_change is True:
+            if self.n_iter_no_change is True or self.early_stopping > 0:
+
+                if self.early_stopping > 0 and validation_strategy.is_best_performance_updated():
+                    self.cur_best_model = self.get_cur_model()
+                    LOGGER.debug('cur best model saved')
+
                 stop_flag = self.sync_stop_flag(i)
                 if stop_flag:
                     break
@@ -192,13 +208,10 @@ class HeteroSecureBoostingTreeHost(BoostingTree):
         if self.need_cv:
             return None
 
-        meta_name, meta_protobuf = self.get_model_meta()
-        param_name, param_protobuf = self.get_model_param()
-        self.model_output = {meta_name: meta_protobuf,
-                             param_name: param_protobuf
-                             }
+        if self.cur_best_model is not None:
+            return self.cur_best_model
 
-        return self.model_output
+        return self.get_cur_model()
 
     def load_model(self, model_dict):
         LOGGER.info("load model")

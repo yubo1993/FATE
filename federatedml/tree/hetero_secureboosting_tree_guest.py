@@ -93,6 +93,7 @@ class HeteroSecureBoostingTreeGuest(BoostingTree):
         self.encrypted_mode_calculator = None
         self.feature_importances_ = {}
         self.role = consts.GUEST
+        self.cur_best_model = None
 
         self.transfer_variable = HeteroSecureBoostingTreeTransferVariable()
 
@@ -289,6 +290,13 @@ class HeteroSecureBoostingTreeGuest(BoostingTree):
                                                 idx=-1,
                                                 suffix=(num_round,))
 
+    def get_cur_model(self):
+        meta_name, meta_protobuf = self.get_model_meta()
+        param_name, param_protobuf = self.get_model_param()
+        return {meta_name: meta_protobuf,
+                param_name: param_protobuf
+                }
+
     def fit(self, data_inst, validate_data=None):
         LOGGER.info("begin to train secureboosting guest model")
         self.gen_feature_fid_mapping(data_inst.schema)
@@ -307,6 +315,8 @@ class HeteroSecureBoostingTreeGuest(BoostingTree):
                                       extra_metas={"unit_name": "iters"}))
 
         validation_strategy = self.init_validation_strategy(data_inst, validate_data)
+        if self.early_stopping > 0:
+            validation_strategy.sync_status = True
 
         for i in range(self.num_trees):
             self.compute_grad_and_hess()
@@ -343,14 +353,29 @@ class HeteroSecureBoostingTreeGuest(BoostingTree):
                                  [Metric(i, loss)])
 
             if validation_strategy:
+
                 validation_strategy.validate(self, i)
 
-            if self.n_iter_no_change is True:
-                if self.check_convergence(loss):
-                    self.sync_stop_flag(True, i)
-                    break
-                else:
-                    self.sync_stop_flag(False, i)
+                if self.early_stopping > 0:
+
+                    if validation_strategy.is_best_performance_updated():
+                        self.cur_best_model = self.get_cur_model()
+                        LOGGER.debug('cur best model saved')
+
+                    should_stop = validation_strategy.check_early_stopping(self.early_stopping)
+
+                    if should_stop:
+                        LOGGER.info('early stopping condition satisfied')
+                        self.sync_stop_flag(True, i)
+                        break
+
+            if self.n_iter_no_change and self.check_convergence(loss):
+                self.sync_stop_flag(True, i)
+                break
+
+            if self.n_iter_no_change or (self.early_stopping > 0 and validation_strategy is not None):
+                # if pass the n_iter_no_change and early stopping check above, send false flag
+                self.sync_stop_flag(False, i)
 
         LOGGER.debug("history loss is {}".format(min(self.history_loss)))
         self.callback_meta("loss",
@@ -507,13 +532,10 @@ class HeteroSecureBoostingTreeGuest(BoostingTree):
         if self.need_cv:
             return None
 
-        meta_name, meta_protobuf = self.get_model_meta()
-        param_name, param_protobuf = self.get_model_param()
-        self.model_output = {meta_name: meta_protobuf,
-                             param_name: param_protobuf
-                             }
+        if self.cur_best_model is not None:
+            return self.cur_best_model
 
-        return self.model_output
+        return self.get_cur_model()
 
     def load_model(self, model_dict):
         model_param = None
