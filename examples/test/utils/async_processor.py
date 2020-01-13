@@ -6,10 +6,10 @@ import threading
 import time
 import typing
 
-from examples.test.utils.log import Logger
+from examples.test.utils.log import LOGGER
 
 
-class AbstractTask(Logger):
+class AbstractTask(object):
     def __init__(self, task_id: str, priority: typing.Union[int, float] = 0, timeout=math.inf):
         self.task_id = task_id
         self.priority = priority
@@ -43,7 +43,7 @@ class AbstractTask(Logger):
         return self._timeout
 
 
-class AbstractTaskResult(Logger):
+class AbstractTaskResult(object):
     def __init__(self, task_id, priority=0):
         self.task_id = task_id
         self.priority = priority
@@ -79,7 +79,7 @@ class FailTaskResult(AbstractTaskResult):
         super().__init__(task_id=task_id, priority=priority)
 
 
-class TaskHandler(Logger):
+class TaskHandler(object):
     def __init__(self):
         self.name = None
         # noinspection PyTypeChecker
@@ -93,7 +93,7 @@ class TaskHandler(Logger):
         pass
 
 
-class AsyncProcessor(Logger):
+class AsyncProcessor(object):
 
     def __init__(self):
         super().__init__()
@@ -159,32 +159,32 @@ class AsyncProcessor(Logger):
         self.num_task_handler += 1
         task_handler_name = f"task-handler-{self.num_task_handler}"
         task_handler.set_name(task_handler_name)
-        self.debug(f"[{task_handler_name}]start")
+        LOGGER.debug(f"[{task_handler_name}]start")
 
         while True:
             task: AbstractTask = await self._job_queue.get()
             task.time_reset()
             # receive poison pill, stop task handler
             if isinstance(task, _PoisonPill):
-                self.debug(f"[{task_handler_name}]receive poison pill, die")
+                LOGGER.debug(f"[{task_handler_name}]receive poison pill, die")
                 self._job_queue.task_done()
                 return
 
-            self.debug(f"[{task_handler_name}]start {task}")
+            LOGGER.debug(f"[{task_handler_name}]start {task}")
 
             result = FailTaskResult(task.task_id, task.priority)
             # noinspection PyBroadException
             try:
                 result = await task_handler.do_task(task)
             except Exception:
-                self.exception(f"[{task_handler_name}] error")
+                LOGGER.exception(f"[{task_handler_name}] error")
             finally:
                 self._job_queue.task_done()
                 self.result_queue.put(result)
-            self.debug(f"[{task_handler_name}]done {task}")
+            LOGGER.debug(f"[{task_handler_name}]done {task}")
 
     async def _add_task(self, task):
-        self.debug(f"[add task]{task}")
+        LOGGER.debug(f"[add task]{task}")
         self._job_queue.put_nowait(task)
 
     async def _join_job_queue(self):

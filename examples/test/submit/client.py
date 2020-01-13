@@ -18,7 +18,7 @@ import json
 import os
 import subprocess
 
-from examples.test.utils.log import Logger
+from examples.test.utils.log import LOGGER
 
 DEFAULT_FATE_HOME = os.path.abspath(os.path.join(os.getcwd(), "../../.."))
 
@@ -60,7 +60,7 @@ class Env(object):
         return self.ip_map[party_id]
 
 
-class Submitter(Logger):
+class Submitter(object):
 
     def __init__(self, env: Env):
         self.env = env
@@ -85,7 +85,7 @@ class Submitter(Logger):
     def submit(self, cmd):
         full_cmd = ["python", self.flow_client_path]
         full_cmd.extend(cmd)
-        self.debug(f"submit {full_cmd}")
+        LOGGER.debug(f"submit {full_cmd}")
         stdout = self.run_cmd(full_cmd)
         try:
             stdout = json.loads(stdout)

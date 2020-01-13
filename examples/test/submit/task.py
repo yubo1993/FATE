@@ -23,6 +23,7 @@ from datetime import timedelta
 
 from examples.test.submit.client import Submitter, Env
 from examples.test.utils.async_processor import AbstractTask, AbstractTaskResult, TaskHandler
+from examples.test.utils.log import LOGGER
 
 
 class JsonDumpedFile(object):
@@ -66,7 +67,7 @@ class AbstractSubmitTask(AbstractTask):
             stdout = submitter.submit(["-f", "query_job", "-j", job_id])
             status = stdout["data"][0]["f_status"]
             elapse_seconds = self.time_elapse()
-            self.info(f"{job_id} {status}, elapse: {timedelta(seconds=elapse_seconds)}")
+            LOGGER.info(f"{job_id} {status}, elapse: {timedelta(seconds=elapse_seconds)}")
             if (status == "running" or status == "waiting") and elapse_seconds < self.timeout:
                 await asyncio.sleep(0.1)
             else:

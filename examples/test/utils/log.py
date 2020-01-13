@@ -13,41 +13,13 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
-import logging
-import sys
+import logging.config
+import os
 
-
-def _create_logger():
-    logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)
-
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setLevel(logging.DEBUG)
-    formatter = logging.Formatter('[%(asctime)s] - [%(levelname)s] - %(name)s - %(message)s')
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    return logger
-
-
-class Logger(object):
-    logger = _create_logger()
-
-    @classmethod
-    def info(cls, msg):
-        cls.logger.info(msg)
-
-    @classmethod
-    def debug(cls, msg):
-        cls.logger.debug(msg)
-
-    @classmethod
-    def warning(cls, msg):
-        cls.logger.warning(msg)
-
-    @classmethod
-    def error(cls, msg):
-        cls.logger.error(msg)
-
-    @classmethod
-    def exception(cls, msg):
-        cls.logger.exception(msg)
+if not os.path.exists("../logs/"):
+    os.makedirs("../logs/")
+logging.config.fileConfig('../conf/logging.conf')
+try:
+    LOGGER = logging.getLogger("submit")
+except KeyError as e:
+    LOGGER = logging.getLogger()

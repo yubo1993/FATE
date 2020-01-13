@@ -54,7 +54,6 @@ class TaskScheduler(object):
             else:
                 self.status[taskid] = Status.SUBMIT_READY
                 heapq.heappush(self.submit_ready, taskid)
-        print("aa")
 
     def _dependence_satisfied(self, task_id):
         task = self.tasks[task_id]
@@ -73,6 +72,8 @@ class TaskScheduler(object):
     def task_success(self, task_id):
         self.status[task_id] = Status.SUCCESS
 
+        if task_id not in self.post_task_map:
+            return
         # update post-task status
         for post_taskid in self.post_task_map[task_id]:
             if post_taskid in self.waiting_taskid_set and self._dependence_satisfied(post_taskid):
