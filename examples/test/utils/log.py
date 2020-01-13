@@ -16,10 +16,24 @@
 import logging.config
 import os
 
-if not os.path.exists("../logs/"):
-    os.makedirs("../logs/")
-logging.config.fileConfig('../conf/logging.conf')
-try:
-    LOGGER = logging.getLogger("submit")
-except KeyError as e:
-    LOGGER = logging.getLogger()
+import yaml
+
+
+def set_logger(config_path):
+    global LOGGER
+    with open('../conf/logging.yaml', 'r') as f:
+        yaml_cfg = yaml.safe_load(f.read())
+    logging.config.dictConfig(yaml_cfg)
+    try:
+        LOGGER = logging.getLogger("submit")
+    except KeyError as e:
+        LOGGER = logging.getLogger()
+
+
+def maybe_mkdir(path):
+    if not os.path.exists(path):
+        os.makedirs(path)
+
+
+maybe_mkdir("../logs")
+set_logger("../conf/logging.yaml")
