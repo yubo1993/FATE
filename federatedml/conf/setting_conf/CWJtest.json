@@ -1,0 +1,19 @@
+{
+    "module_path":  "federatedml/cwjtest/",
+    "default_runtime_conf": "cwjtest_param.json",
+    "param_class" : "federatedml/param/cwjtestparam.py/CwjParam",
+    "role":
+    {
+        "guest":
+        {
+            "program": "guest.py/CWJGuest"
+        },
+        "host":
+        {
+            "program": "fakehost.py/FakeHost"
+        },
+        "arbiter": {
+            "program": "arbiter.py/CWJArbiter"
+        }
+    }
+}

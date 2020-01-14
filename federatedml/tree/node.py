@@ -45,6 +45,11 @@ class Node(object):
         self.right_nodeid = right_nodeid
         self.missing_dir = missing_dir
 
+    def __str__(self):
+        return "fid:{},bid:{},weight:{},sum_grad:{},sum_hess:{},left_node:{},right_node:{}".format(
+                self.fid,self.bid,self.weight,self.sum_grad,self.sum_hess,self.left_nodeid,self.right_nodeid
+        )
+
 
 class SplitInfo(object):
     def __init__(self, sitename=consts.GUEST, best_fid=None, best_bid=None,
@@ -56,3 +61,7 @@ class SplitInfo(object):
         self.sum_hess = sum_hess
         self.gain = gain
         self.missing_dir = missing_dir
+
+    def __str__(self):
+        return 'best_fid:{},best_bid{},sum_grad{},sum_hess{},gain{}'.format(self.best_fid,self.best_bid,
+                                                                            self.sum_grad,self.sum_hess,self.gain)
