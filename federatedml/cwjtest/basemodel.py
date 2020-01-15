@@ -42,6 +42,10 @@ class CWJBase(ModelBase):
     def fit(self,train=None,validate=None):
         LOGGER.debug('fit called')
         self.aggregator.send_histogram([self.hist,self.hist],suffix=('cwj',))
-        # data = self.sync_data_vara()
-        LOGGER.debug(self.hist.flatten())
         LOGGER.info('data sent')
+        # data = self.sync_data_vara()
+        self.aggregator.send_local_root_node_info(114,514,1919,suffix=('cwj2',))
+        received = self.aggregator.get_aggregated_root_info(suffix=('cwj1',))
+        LOGGER.debug(received)
+        LOGGER.debug('data received')
+

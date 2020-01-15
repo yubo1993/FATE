@@ -74,9 +74,9 @@ class HomoSecureBoostingTreeArbiter(BoostingTree):
         self.feature_num = self.sync_feature_num()
 
         LOGGER.debug('begin to fit a boosting tree')
-        for tree_idx in range(self.num_trees):
+        for epoch_idx in range(self.num_trees):
             valid_feature = self.sample_valid_feature()
-            new_tree = HomoDecisionTreeArbiter(self.tree_param, valid_feature=valid_feature, tree_idx=tree_idx)
+            new_tree = HomoDecisionTreeArbiter(self.tree_param, valid_feature=valid_feature, epoch_idx=epoch_idx)
             new_tree.fit()
 
         LOGGER.debug('fitting homo decision tree done')

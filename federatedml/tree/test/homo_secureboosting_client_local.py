@@ -13,7 +13,7 @@ from federatedml.loss import LeastAbsoluteErrorLoss
 from federatedml.loss import TweedieLoss
 from federatedml.loss import LogCoshLoss
 from federatedml.loss import FairLoss
-from federatedml.tree.homo_decision_tree_client import HomoDecisionTreeClient
+from federatedml.tree.test.homo_decision_tree_client_local import HomoDecisionTreeClient
 from federatedml.feature.instance import Instance
 from federatedml.feature.sparse_vector import SparseVector
 
@@ -25,7 +25,7 @@ from arch.api.table.eggroll.table_impl import DTable
 import numpy as np
 from arch.api.utils import log_utils
 
-LOGGER = log_utils.getLogger()
+# LOGGER = log_utils.getLogger()
 
 class LocalTestLogger(object):
 
@@ -72,7 +72,7 @@ class FakeBinning():
         new_table = Dtable.mapValues(func)
         return new_table,self.split_points,{k:0 for k in range(self.bin_num)}
 
-# LOGGER = LocalTestLogger()
+LOGGER = LocalTestLogger()
 
 class HomoSecureBoostingTreeClient(BoostingTree):
 
@@ -203,23 +203,24 @@ class HomoSecureBoostingTreeClient(BoostingTree):
     def sync_feature_num(self):
         self.transfer_inst.feature_number.remote(self.feature_num,role=consts.ARBITER,idx=-1,suffix=(0,))
 
-    def fit(self, data_inst:DTable,validate_data=None):
+    def fit(self, data_inst,validate_data=None):
 
         # data_inst = self.data_alignment(data_inst)
 
-        # sample num
-        LOGGER.debug('sample number is {}'.format(data_inst.count()))
-
         # binning
         self.binned_data ,self.bin_split_points ,self.bin_sparse_points = self.federated_binning(data_inst)
+        print('binned data num:{}'.format(self.binned_data.count()))
         # set feature_num
         self.feature_num = self.bin_split_points.shape[0]
         # sending feature number to host
-        self.sync_feature_num()
+        # self.sync_feature_num()
         # set loss function
         self.set_loss_function(self.objective_param)
         # set labels
         self.y = self.binned_data.mapValues(lambda instance :instance.label)
+        print('y label:')
+        print(list(self.y.collect()))
+        print(self.y.count())
         # set y_hat_val
         self.y_hat, self.init_score = self.loss_fn.initialize(self.y) if self.tree_dim == 1 else \
             self.loss_fn.initialize(self.y, self.tree_dim)
@@ -234,10 +235,9 @@ class HomoSecureBoostingTreeClient(BoostingTree):
             new_tree.fit()
             self.update_y_hat_val(new_val=new_tree.sample_weights, mode='train', tree_idx=0)
             self.trees.append(new_tree)
-            loss = self.compute_local_loss(self.y ,self.y_hat)
-
-            LOGGER.debug('predicted val')
-            LOGGER.debug(list(self.y_hat.collect()))
+            loss = self.compute_local_loss(self.y,self.y_hat)
+            print('predicted val')
+            print(list(self.y_hat.collect()))
             LOGGER.debug('fitting one tree done,cur local loss is {}'.format(loss))
 
 

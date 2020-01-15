@@ -24,7 +24,9 @@
 # =============================================================================
 # Criterion
 # =============================================================================
+from arch.api.utils import log_utils
 
+LOGGER = log_utils.getLogger()
 
 class Criterion(object):
     def __init__(self, criterion_params):
@@ -51,4 +53,6 @@ class XgboostCriterion(Criterion):
         return sum_grad * sum_grad / (sum_hess + self.reg_lambda)
 
     def node_weight(self, sum_grad, sum_hess):
+        LOGGER.debug('computing weights')
+        LOGGER.debug('g:{} reg:{} h:{} reg+h{}'.format(-sum_grad,self.reg_lambda,sum_hess,self.reg_lambda+sum_hess))
         return -sum_grad / (self.reg_lambda + sum_hess)

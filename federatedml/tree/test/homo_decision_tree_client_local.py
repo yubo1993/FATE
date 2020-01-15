@@ -25,7 +25,6 @@ from federatedml.param import DecisionTreeParam
 import numpy as np
 from typing import List,Dict,Tuple
 from federatedml.tree.splitter import SplitInfo
-import copy
 import pandas as pd
 
 from federatedml.tree.homo_secureboosting_aggregator import SecureBoostClientAggregator
@@ -82,7 +81,7 @@ class HomoDecisionTreeClient(DecisionTree):
         # secure aggregator, class SecureBoostClientAggregator
         assert role == consts.HOST or role == consts.GUEST
         self.role = role
-        self.aggregator = SecureBoostClientAggregator(role=self.role,transfer_variable=self.transfer_inst)
+        # self.aggregator = SecureBoostClientAggregator(role=self.role,transfer_variable=self.transfer_inst)
 
     def set_flowid(self, flowid=0):
         LOGGER.info("set flowid, flowid is {}".format(flowid))
@@ -115,9 +114,12 @@ class HomoDecisionTreeClient(DecisionTree):
 
     def sync_local_node_histogram(self, acc_histogram:List[HistogramBag], suffix):
         # sending local histogram
+        # self.transfer_inst.local_histogram.remote(acc_histogram,role=consts.ARBITER,idx=-1,suffix=suffix)
+        # LOGGER.debug(acc_histogram[0])
         self.aggregator.send_histogram(acc_histogram,suffix=suffix)
         LOGGER.debug('local histogram sent at layer {}'.format(suffix[0]))
-
+        # best_splits = self.splitter.find_split(acc_histogram,self.valid_features,self.binned_data._partitions,
+        #                                        self.sitename,self.use_missing,self.zero_as_missing)
 
     def get_local_histogram(self,node_map,g_h,table_with_assign,split_points,sparse_point,
                             valid_feature):
@@ -127,7 +129,7 @@ class HomoDecisionTreeClient(DecisionTree):
             split_points, sparse_point,
             valid_feature, node_map,
             self.use_missing, self.zero_as_missing)
-
+        LOGGER.info("begin to accumulate histograms")
         acc_histograms = FeatureHistogram.accumulate_histogram(histograms)
         return acc_histograms
 
@@ -248,7 +250,6 @@ class HomoDecisionTreeClient(DecisionTree):
         self.transfer_inst.cur_layer_node_num.remote(node_num,role=consts.ARBITER,idx=-1,suffix=suffix)
 
     def sync_best_splits(self,suffix) -> List[SplitInfo]:
-
         best_splits = self.transfer_inst.best_split_points.get(idx=0,suffix=suffix)
         return best_splits
 
@@ -260,21 +261,18 @@ class HomoDecisionTreeClient(DecisionTree):
 
         g_sum, h_sum = self.get_grad_hess_sum(self.g_h)
 
-        LOGGER.debug('g_sum is {},h_sum is {}'.format(g_sum,h_sum))
-        LOGGER.debug('g_sum*2 is {},h_sum*2 is {}'.format(g_sum*2, h_sum*2))
+        # # get aggregated root info
+        # self.aggregator.send_local_root_node_info(g_sum,h_sum,suffix=('root_node_sync1',self.epoch_idx))
+        # g_h_dict = self.aggregator.get_aggregated_root_info(suffix=('root_node_sync2',self.epoch_idx))
+        # g_sum,h_sum = g_h_dict['g_sum'],g_h_dict['h_sum']
 
-        # g_sum *= 2
-        # h_sum *= 2
+        g_sum *= 2
+        h_sum *= 2
 
-        # get aggregated root info
-        self.aggregator.send_local_root_node_info(g_sum,h_sum,suffix=('root_node_sync1',self.epoch_idx))
-        g_h_dict = self.aggregator.get_aggregated_root_info(suffix=('root_node_sync2',self.epoch_idx))
-        global_g_sum,global_h_sum = g_h_dict['g_sum'],g_h_dict['h_sum']
+        print('gsum_is {}, h_sum is {}'.format(g_sum, h_sum))
 
-        LOGGER.debug('global_g_sum is {},global_h_sum is {}'.format(global_g_sum, global_h_sum))
-
-        root_node = Node(id=0, sitename=consts.GUEST, sum_grad=global_g_sum, sum_hess=global_h_sum, weight= \
-            self.splitter.node_weight(global_g_sum,global_h_sum))
+        root_node = Node(id=0, sitename=consts.GUEST, sum_grad=g_sum, sum_hess=h_sum, weight= \
+            self.splitter.node_weight(g_sum, h_sum))
 
         self.cur_layer_node = [root_node]
         LOGGER.debug('assign samples to root node')
@@ -302,7 +300,7 @@ class HomoDecisionTreeClient(DecisionTree):
                                                           lambda inst, assignment: (inst, assignment))
 
             # send current layer node number:
-            self.sync_cur_layer_node_num(len(self.cur_layer_node),suffix=(dep,self.epoch_idx))
+            # self.sync_cur_layer_node_num(len(self.cur_layer_node),suffix=(dep,self.epoch_idx))
 
             split_info = []
             for batch_id,i in enumerate(range(0,len(self.cur_layer_node),self.max_split_nodes)):
@@ -313,32 +311,28 @@ class HomoDecisionTreeClient(DecisionTree):
                 acc_histogram = self.get_local_histogram(node_map,self.g_h,table_with_assignment,self.bin_split_points,
                                                          self.bin_sparse_points,self.valid_features)
 
-                LOGGER.debug('federated finding best splits for batch{} at layer {}'.format(batch_id,dep))
-                acc_histogram_copy = copy.deepcopy(acc_histogram)
+                print('showing histogram')
+                for bag in acc_histogram:
+                    print(bag)
 
-                # for testing:
-                # LOGGER.debug('showing histogram, batch id is {}'.format(batch_id))
-                # for idx,hist in enumerate(acc_histogram_copy):
-                #     LOGGER.debug('showing hist {}'.format(idx))
-                #     LOGGER.debug(hist)
+                for bag in acc_histogram:
+                    bag.add_inplace(bag)
 
-                self.sync_local_node_histogram(acc_histogram_copy, suffix=(batch_id, dep, self.epoch_idx))
+                LOGGER.debug('federated finding best splits for batch{}'.format(batch_id))
+                # self.sync_local_node_histogram(acc_histogram, suffix=(batch_id, dep, self.epoch_idx))
+
+                # for local testing
+                split_info += self.splitter.find_split(acc_histogram,use_missing=self.use_missing,zero_as_missing=
+                                                       self.zero_as_missing,valid_features=self.valid_features)
 
 
-                # # for local testing
-                # for bag in acc_histogram:
-                #     bag.add_inplace(bag)
-                # split_info += self.splitter.find_split(acc_histogram,use_missing=self.use_missing,zero_as_missing=
-                #                                        self.zero_as_missing,valid_features=self.valid_features)
+            # split_info = self.sync_best_splits(suffix=(dep,self.epoch_idx))
+            LOGGER.debug('got best splits from host')
 
-            split_info2 = self.sync_best_splits(suffix=(dep,self.epoch_idx))
-            # LOGGER.debug('got best splits from arbiter')
+            for info in split_info:
+                print(info)
 
-            LOGGER.debug('showing split_info_2')
-            for info in split_info2:
-                LOGGER.debug(info)
-
-            new_layer_node = self.update_tree(self.cur_layer_node,split_info2)
+            new_layer_node = self.update_tree(self.cur_layer_node,split_info)
             self.cur_layer_node = new_layer_node
             self.update_feature_importance(split_info)
 
@@ -409,19 +403,8 @@ class HomoDecisionTreeClient(DecisionTree):
         return predicted_weights
 
     def print_leafs(self):
-        LOGGER.debug('printing tree')
         for node in self.tree_node:
-            LOGGER.debug(node)
-
-    def print_split(self,split_infos:[SplitInfo]):
-        LOGGER.debug('printing split info')
-        for info in split_infos:
-            LOGGER.debug(info)
-
-    def print_hist(self,hist_list:[HistogramBag]):
-        LOGGER.debug('printing histogramBag')
-        for bag in hist_list:
-            LOGGER.debug(bag)
+            print(node)
 
     def set_model_meta(self):
         pass

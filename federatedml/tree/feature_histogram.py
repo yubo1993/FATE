@@ -41,7 +41,7 @@ class HistogramBag(object):
     holds histograms
     """
 
-    def __init__(self, component_num:int = 0, bin_num: list = None, valid_dict: dict = None, flatten_list:list=None):
+    def __init__(self, component_num:int = 0, bin_num: list = None, valid_dict: dict = None,):
 
         """
         Parameters
@@ -53,25 +53,21 @@ class HistogramBag(object):
         valid_feature: disable a component if {cid:False}
         """
 
-        if isinstance(flatten_list,list) and flatten_list is not None:
-            self.bin_num,self.component_num,self.bag = self._load_flatten(flatten_list)
+        if bin_num == 0:
+            bin_num = []
 
-        else:
-            if bin_num == 0:
-                bin_num = []
+        self.bin_num = bin_num
+        self.component_num = component_num
 
-            self.bin_num = bin_num
-            self.component_num = component_num
-
-            self.bag = []
-            component_num = component_num
-            assert component_num == len(bin_num)
-            for cid in range(component_num):
-                if valid_dict is not None and valid_dict[cid] == False:
-                    self.bag.append([])
-                else:
-                    # self.bag.append(np.zeros((bin_num[fid],3)))
-                    self.bag.append([[0,0,0] for i in range(bin_num[cid])])
+        self.bag = []
+        component_num = component_num
+        assert component_num == len(bin_num)
+        for cid in range(component_num):
+            if valid_dict is not None and valid_dict[cid] == False:
+                self.bag.append([])
+            else:
+                # self.bag.append(np.zeros((bin_num[fid],3)))
+                self.bag.append([[0,0,0] for i in range(bin_num[cid])])
 
     def binary_op(self, other, func, inplace=False):
         assert isinstance(other, HistogramBag)
@@ -190,7 +186,6 @@ class FeatureHistogram(object):
         batch_histogram = data_bin.join(grad_and_hess, \
                                         lambda data_inst, g_h: (data_inst, g_h)).mapPartitions(batch_histogram_cal)
 
-        LOGGER.debug('cwj compute hist done')
         return batch_histogram.reduce(agg_histogram)
 
     @staticmethod
@@ -230,7 +225,7 @@ class FeatureHistogram(object):
 
         missing_bin = 1 if use_missing else 0
 
-        # node_num, node num * [feature_num], this bag collect g_h sum of every feature in every node
+        # node_num, node num * [feature_num], this bag collect g/h sum of every feature in every node
         zero_optim = HistogramBag(node_num, bin_num=[bin_split_points.shape[0]] * node_num)
         zero_opt_node_sum = [[0 for i in range(3)]
                              for j in range(node_num)]
@@ -280,16 +275,5 @@ class FeatureHistogram(object):
                         node_histograms[nid][fid][-1][2] += zero_opt_node_sum[nid][2] - zero_optim[nid][fid][2]
 
         LOGGER.info("batch compute done")
+
         return node_histograms
-
-if __name__ == '__main__':
-
-    hista = HistogramBag(2, [1, 1])
-    hista[0][0][1] = 10
-    hista[1][0][0] = 10
-
-    histb = HistogramBag(2, [1, 1])
-    histb[0][0][1] = 123
-    histb[1][0][0] = 114
-
-    weights = FeatureHistogramWeights([hista,histb])
