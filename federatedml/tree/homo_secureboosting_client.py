@@ -4,6 +4,9 @@ from federatedml.param.feature_binning_param import FeatureBinningParam
 from federatedml.tree import BoostingTree
 from federatedml.transfer_variable.transfer_class.homo_secure_boost_transfer_variable import \
     HomoSecureBoostingTreeTransferVariable
+from federatedml.transfer_variable.transfer_class.homo_decision_tree_transfer_variable import \
+    HomoDecisionTreeTransferVariable
+from federatedml.tree.homo_secureboosting_aggregator import SecureBoostClientAggregator
 from federatedml.util import consts
 from federatedml.loss import SigmoidBinaryCrossEntropyLoss
 from federatedml.loss import SoftmaxCrossEntropyLoss
@@ -136,6 +139,7 @@ class HomoSecureBoostingTreeClient(BoostingTree):
         #
         # LOGGER.info('converting feature to bin done')
         # return binned_data ,bin_split_points ,bin_sparse_points
+
         binning = FakeBinning(bin_num=10)
         return binning.fit(data_instance)
 
@@ -230,7 +234,7 @@ class HomoSecureBoostingTreeClient(BoostingTree):
             valid_features = self.sample_valid_feature()
             new_tree = HomoDecisionTreeClient(self.tree_param, self.binned_data, self.bin_split_points,
                                               self.bin_sparse_points, g_h, valid_feature=valid_features
-                                              , epoch_idx=epoch_idx,role=self.role)
+                                              , epoch_idx=epoch_idx,role=self.role,flow_id=epoch_idx)
             new_tree.fit()
             self.update_y_hat_val(new_val=new_tree.sample_weights, mode='train', tree_idx=0)
             self.trees.append(new_tree)

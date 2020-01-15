@@ -12,6 +12,9 @@ from federatedml.tree import BoostingTree
 from federatedml.tree.homo_decision_tree_arbiter import HomoDecisionTreeArbiter
 from federatedml.transfer_variable.transfer_class.homo_secure_boost_transfer_variable \
     import HomoSecureBoostingTreeTransferVariable
+from federatedml.transfer_variable.transfer_class.homo_decision_tree_transfer_variable import \
+    HomoDecisionTreeTransferVariable
+from federatedml.tree.homo_secureboosting_aggregator import SecureBoostArbiterAggregator
 from federatedml.util import consts
 from federatedml.secureprotol import PaillierEncrypt
 from federatedml.secureprotol import IterativeAffineEncrypt
@@ -76,7 +79,8 @@ class HomoSecureBoostingTreeArbiter(BoostingTree):
         LOGGER.debug('begin to fit a boosting tree')
         for epoch_idx in range(self.num_trees):
             valid_feature = self.sample_valid_feature()
-            new_tree = HomoDecisionTreeArbiter(self.tree_param, valid_feature=valid_feature, epoch_idx=epoch_idx)
+            new_tree = HomoDecisionTreeArbiter(self.tree_param, valid_feature=valid_feature, epoch_idx=epoch_idx,
+                                               flow_id=epoch_idx)
             new_tree.fit()
 
         LOGGER.debug('fitting homo decision tree done')

@@ -27,15 +27,16 @@ from federatedml.tree.splitter import SplitInfo
 from arch.api.utils import log_utils
 from federatedml.tree.homo_secureboosting_aggregator import SecureBoostArbiterAggregator
 
+
 LOGGER = log_utils.getLogger()
 
 class HomoDecisionTreeArbiter(DecisionTree):
 
-    def __init__(self,tree_param:DecisionTreeModelParam,valid_feature:dict,epoch_idx:int):
+    def __init__(self,tree_param:DecisionTreeModelParam,valid_feature:dict,epoch_idx:int,flow_id:int):
 
         super(HomoDecisionTreeArbiter, self).__init__(tree_param)
         self.splitter = Splitter(self.criterion_method, self.criterion_params, self.min_impurity_split,
-                                 self.min_sample_split, self.min_leaf_node)
+                                 self.min_sample_split, self.min_leaf_node,)
 
         self.transfer_inst = HomoDecisionTreeTransferVariable()
         """
@@ -53,7 +54,9 @@ class HomoDecisionTreeArbiter(DecisionTree):
         self.epoch_idx = epoch_idx
 
         # secure aggregator
-        self.aggregator = SecureBoostArbiterAggregator(self.transfer_inst)
+        self.set_flowid(flow_id)
+        self.aggregator = SecureBoostArbiterAggregator(transfer_variable=self.transfer_inst)
+
 
     def set_flowid(self, flowid=0):
         LOGGER.info("set flowid, flowid is {}".format(flowid))
@@ -129,13 +132,6 @@ class HomoDecisionTreeArbiter(DecisionTree):
             LOGGER.debug('we have {} nodes to split at this layer'.format(cur_layer_node_num))
             for batch_id,i in enumerate(range(0,cur_layer_node_num,self.max_split_nodes)):
                 node_local_histogram = self.sync_local_histogram(suffix=(batch_id,dep,self.epoch_idx))
-
-                # for testing
-                LOGGER.debug('showing histogram, batch id is {}'.format(batch_id))
-                for idx,hist in enumerate(node_local_histogram):
-                    LOGGER.debug('showing hist{}'.format(idx))
-                    LOGGER.debug(hist)
-
                 best_splits = self.federated_find_best_split(node_local_histogram,parallel_partitions=10)
                 split_info += best_splits
 

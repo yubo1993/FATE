@@ -35,7 +35,7 @@ LOGGER = log_utils.getLogger()
 class HomoDecisionTreeClient(DecisionTree):
 
     def __init__(self,tree_param:DecisionTreeParam,binned_data:DTable,bin_split_points:np.array,bin_sparse_point,g_h:DTable
-                 ,valid_feature:dict,epoch_idx:int,role:str):
+                 ,valid_feature:dict,epoch_idx:int,role:str,flow_id:int):
 
         """
         Parameters
@@ -48,6 +48,7 @@ class HomoDecisionTreeClient(DecisionTree):
         valid_feature: dict points out valid features {valid:true,invalid:false}
         epoch_idx: current epoch index
         role: host or guest
+        flow_id: flow id
         """
 
         super(HomoDecisionTreeClient, self).__init__(tree_param)
@@ -82,6 +83,7 @@ class HomoDecisionTreeClient(DecisionTree):
         # secure aggregator, class SecureBoostClientAggregator
         assert role == consts.HOST or role == consts.GUEST
         self.role = role
+        self.set_flowid(flow_id)
         self.aggregator = SecureBoostClientAggregator(role=self.role,transfer_variable=self.transfer_inst)
 
     def set_flowid(self, flowid=0):
@@ -258,13 +260,10 @@ class HomoDecisionTreeClient(DecisionTree):
         """
         LOGGER.info('begin to fit homo decision tree')
 
+        # compute local g_sum and h_sum
         g_sum, h_sum = self.get_grad_hess_sum(self.g_h)
 
         LOGGER.debug('g_sum is {},h_sum is {}'.format(g_sum,h_sum))
-        LOGGER.debug('g_sum*2 is {},h_sum*2 is {}'.format(g_sum*2, h_sum*2))
-
-        # g_sum *= 2
-        # h_sum *= 2
 
         # get aggregated root info
         self.aggregator.send_local_root_node_info(g_sum,h_sum,suffix=('root_node_sync1',self.epoch_idx))
@@ -273,6 +272,7 @@ class HomoDecisionTreeClient(DecisionTree):
 
         LOGGER.debug('global_g_sum is {},global_h_sum is {}'.format(global_g_sum, global_h_sum))
 
+        # initialize node
         root_node = Node(id=0, sitename=consts.GUEST, sum_grad=global_g_sum, sum_hess=global_h_sum, weight= \
             self.splitter.node_weight(global_g_sum,global_h_sum))
 
@@ -314,29 +314,17 @@ class HomoDecisionTreeClient(DecisionTree):
                                                          self.bin_sparse_points,self.valid_features)
 
                 LOGGER.debug('federated finding best splits for batch{} at layer {}'.format(batch_id,dep))
-                acc_histogram_copy = copy.deepcopy(acc_histogram)
-
-                # for testing:
-                # LOGGER.debug('showing histogram, batch id is {}'.format(batch_id))
-                # for idx,hist in enumerate(acc_histogram_copy):
-                #     LOGGER.debug('showing hist {}'.format(idx))
-                #     LOGGER.debug(hist)
-
-                self.sync_local_node_histogram(acc_histogram_copy, suffix=(batch_id, dep, self.epoch_idx))
+                self.sync_local_node_histogram(acc_histogram, suffix=(batch_id, dep, self.epoch_idx))
 
 
-                # # for local testing
+                # # only for local testing
                 # for bag in acc_histogram:
                 #     bag.add_inplace(bag)
                 # split_info += self.splitter.find_split(acc_histogram,use_missing=self.use_missing,zero_as_missing=
                 #                                        self.zero_as_missing,valid_features=self.valid_features)
 
             split_info2 = self.sync_best_splits(suffix=(dep,self.epoch_idx))
-            # LOGGER.debug('got best splits from arbiter')
-
-            LOGGER.debug('showing split_info_2')
-            for info in split_info2:
-                LOGGER.debug(info)
+            LOGGER.debug('got best splits from arbiter')
 
             new_layer_node = self.update_tree(self.cur_layer_node,split_info2)
             self.cur_layer_node = new_layer_node
@@ -357,7 +345,8 @@ class HomoDecisionTreeClient(DecisionTree):
         LOGGER.debug('fitting tree done')
         LOGGER.debug('tree node num is {}'.format(len(self.tree_node)))
 
-        self.print_leafs()
+        # only for testing
+        # self.print_leafs()
 
 
     def traverse_tree(self,data_inst:Instance,tree:List[Node],use_missing=True,zero_as_missing=True):

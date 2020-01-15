@@ -4,9 +4,7 @@ from functools import reduce
 from arch.api.utils import log_utils
 from federatedml.framework.weights import DictWeights
 from federatedml.tree.feature_histogram import HistogramBag,FeatureHistogramWeights
-from typing import List
-import numpy as np
-from typing import Dict
+from typing import List,Dict
 
 LOGGER = log_utils.getLogger()
 
@@ -16,23 +14,27 @@ class SecureBoostArbiterAggregator():
      secure aggregator for secureboosting Arbiter, gather histogram and numbers
     """
 
-    def __init__(self,transfer_variable):
+    def __init__(self,transfer_variable,verbose=False):
         self.aggregator = aggregator.Arbiter()
         self.aggregator.register_aggregator(transfer_variable,enable_secure_aggregate=True)
+        self.verbose = self.verbose
 
-    def aggregate_num(self,suffix):
+    def aggregate_num(self,suffix,):
         self.aggregator.aggregate_loss(idx=-1,suffix=suffix)
 
     def aggregate_histogram(self,suffix) -> List[HistogramBag]:
         received_data = self.aggregator.get_models_for_aggregate(ciphers_dict=None,suffix=suffix)
         LOGGER.debug('showing received data')
+
         def reduce_func(x,y):
-            LOGGER.debug('guest')
-            LOGGER.debug(x[0]._weights[0])
-            LOGGER.debug('host')
-            LOGGER.debug(y[0]._weights[0])
             return x[0]+y[0],x[1]+y[1]
+
         agg_histogram, total_degree = reduce(reduce_func, received_data)
+
+        if self.verbose:
+            for hist in agg_histogram._weights:
+                LOGGER.debug(hist)
+
         return agg_histogram._weights
 
     def broadcast_best_splits(self):
@@ -57,7 +59,7 @@ class SecureBoostClientAggregator():
     secure aggregator for secureboosting Client, send histogram and numbers
     """
 
-    def __init__(self,role,transfer_variable):
+    def __init__(self,role,transfer_variable,verbose=False):
         self.aggregator = None
         if role == consts.GUEST:
             self.aggregator = aggregator.Guest()
@@ -65,14 +67,16 @@ class SecureBoostClientAggregator():
             self.aggregator = aggregator.Host()
 
         self.aggregator.register_aggregator(transfer_variable,enable_secure_aggregate=True)
+        self.verbose = verbose
 
     def send_number(self,number:float,degree:int,suffix):
         self.aggregator.send_loss(number,degree,suffix=suffix)
 
     def send_histogram(self,hist:List[HistogramBag],suffix):
-        for idx, histbag in enumerate(hist):
-            LOGGER.debug('showing client hist {}'.format(idx))
-            LOGGER.debug(histbag)
+        if self.verbose:
+            for idx, histbag in enumerate(hist):
+                LOGGER.debug('showing client hist {}'.format(idx))
+                LOGGER.debug(histbag)
         weights = FeatureHistogramWeights(list_of_histogrambags=hist)
         self.aggregator.send_model(weights,degree=1,suffix=suffix)
 

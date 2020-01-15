@@ -1,5 +1,4 @@
 from federatedml.tree.homo_secureboosting_client import HomoSecureBoostingTreeClient
-from federatedml.tree.homo_secureboosting_aggregator import SecureBoostClientAggregator
 from federatedml.util import consts
 from arch.api.utils import log_utils
 
@@ -11,6 +10,7 @@ class HomoSecureBoostingTreeGuest(HomoSecureBoostingTreeClient):
     def __init__(self):
         super(HomoSecureBoostingTreeGuest, self).__init__()
         self.role = consts.GUEST
+
 
 
 
