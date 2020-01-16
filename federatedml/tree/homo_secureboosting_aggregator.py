@@ -17,7 +17,7 @@ class SecureBoostArbiterAggregator():
     def __init__(self,transfer_variable,verbose=False):
         self.aggregator = aggregator.Arbiter()
         self.aggregator.register_aggregator(transfer_variable,enable_secure_aggregate=True)
-        self.verbose = self.verbose
+        self.verbose = verbose
 
     def aggregate_num(self, suffix):
         self.aggregator.aggregate_loss(idx=-1,suffix=suffix)
@@ -26,8 +26,8 @@ class SecureBoostArbiterAggregator():
         received_data = self.aggregator.get_models_for_aggregate(ciphers_dict=None,suffix=suffix)
         LOGGER.debug('showing received data')
 
-        def reduce_func(x,y):
-            return x[0]+y[0],x[1]+y[1]
+        def reduce_func(x, y):
+            return x[0]+y[0], x[1]+y[1]
 
         agg_histogram, total_degree = reduce(reduce_func, received_data)
 
@@ -69,7 +69,7 @@ class SecureBoostClientAggregator():
         self.aggregator.register_aggregator(transfer_variable,enable_secure_aggregate=True)
         self.verbose = verbose
 
-    def send_number(self, number: float, degree: int,suffix):
+    def send_number(self, number: float, degree: int, suffix):
         self.aggregator.send_loss(number,degree,suffix=suffix)
 
     def send_histogram(self, hist: List[HistogramBag], suffix):

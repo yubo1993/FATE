@@ -35,7 +35,7 @@ LOGGER = log_utils.getLogger()
 class HomoDecisionTreeClient(DecisionTree):
 
     def __init__(self, tree_param: DecisionTreeParam, binned_data: DTable, bin_split_points: np.array, bin_sparse_point,
-                 g_h: DTable, valid_feature: dict, epoch_idx: int, role: str, flow_id: int):
+                 g_h: DTable, valid_feature: dict, epoch_idx: int, role: str, tree_idx: int, flow_id: int):
 
         """
         Parameters
@@ -59,6 +59,7 @@ class HomoDecisionTreeClient(DecisionTree):
         self.bin_split_points = bin_split_points
         self.bin_sparse_points = bin_sparse_point
         self.epoch_idx = epoch_idx
+        self.tree_idx = tree_idx
 
         self.transfer_inst = HomoDecisionTreeTransferVariable()
 
@@ -73,7 +74,7 @@ class HomoDecisionTreeClient(DecisionTree):
 
         self.runtime_idx = 0
         self.sitename = consts.GUEST
-        self.feature_importances_ = {}
+        self.feature_importance = {}
 
         self.inst2node_idx = None
 
@@ -107,13 +108,12 @@ class HomoDecisionTreeClient(DecisionTree):
             else:
                 raise ValueError("feature importance type {} not support yet".format(self.feature_importance_type))
 
-            sitename = splitinfo.sitename
             fid = splitinfo.best_fid
 
-            if (sitename, fid) not in self.feature_importances_:
-                self.feature_importances_[(sitename, fid)] = 0
+            if fid not in self.feature_importance:
+                self.feature_importance[fid] = 0
 
-            self.feature_importances_[(sitename, fid)] += inc
+            self.feature_importance[fid] += inc
 
     def sync_local_node_histogram(self, acc_histogram: List[HistogramBag], suffix):
         # sending local histogram
@@ -242,6 +242,9 @@ class HomoDecisionTreeClient(DecisionTree):
         func = functools.partial(func,tree_node=tree_node)
         return inst2node.mapValues(func)
 
+    def get_feature_importance(self):
+        return self.feature_importance
+
     def sync_tree(self,):
         pass
 
@@ -257,7 +260,7 @@ class HomoDecisionTreeClient(DecisionTree):
         """
         start to fit
         """
-        LOGGER.info('begin to fit homo decision tree')
+        LOGGER.info('begin to fit homo decision tree, epoch {}, tree idx {}'.format(self.epoch_idx, self.tree_idx))
 
         # compute local g_sum and h_sum
         g_sum, h_sum = self.get_grad_hess_sum(self.g_h)
@@ -273,7 +276,7 @@ class HomoDecisionTreeClient(DecisionTree):
 
         # initialize node
         root_node = Node(id=0, sitename=consts.GUEST, sum_grad=global_g_sum, sum_hess=global_h_sum, weight= \
-            self.splitter.node_weight(global_g_sum,global_h_sum))
+            self.splitter.node_weight(global_g_sum, global_h_sum))
 
         self.cur_layer_node = [root_node]
         LOGGER.debug('assign samples to root node')
@@ -286,7 +289,7 @@ class HomoDecisionTreeClient(DecisionTree):
                 for node in self.cur_layer_node:
                     node.is_leaf = True
                     self.tree_node.append(node)
-                rest_sample_weights = self.get_node_sample_weights(self.inst2node_idx,self.tree_node)
+                rest_sample_weights = self.get_node_sample_weights(self.inst2node_idx, self.tree_node)
                 if self.sample_weights is None:
                     self.sample_weights = rest_sample_weights
                 else:
@@ -301,10 +304,10 @@ class HomoDecisionTreeClient(DecisionTree):
                                                           lambda inst, assignment: (inst, assignment))
 
             # send current layer node number:
-            self.sync_cur_layer_node_num(len(self.cur_layer_node),suffix=(dep,self.epoch_idx))
+            self.sync_cur_layer_node_num(len(self.cur_layer_node), suffix=(dep, self.epoch_idx, self.tree_idx))
 
             split_info = []
-            for batch_id,i in enumerate(range(0,len(self.cur_layer_node),self.max_split_nodes)):
+            for batch_id,i in enumerate(range(0, len(self.cur_layer_node), self.max_split_nodes)):
                 cur_to_split = self.cur_layer_node[i:i+self.max_split_nodes]
 
                 node_map = {node.id:idx for idx,node in enumerate(cur_to_split)}
@@ -313,7 +316,7 @@ class HomoDecisionTreeClient(DecisionTree):
                                                          self.bin_sparse_points,self.valid_features)
 
                 LOGGER.debug('federated finding best splits for batch{} at layer {}'.format(batch_id,dep))
-                self.sync_local_node_histogram(acc_histogram, suffix=(batch_id, dep, self.epoch_idx))
+                self.sync_local_node_histogram(acc_histogram, suffix=(batch_id, dep, self.epoch_idx, self.tree_idx))
 
 
                 # # only for local testing

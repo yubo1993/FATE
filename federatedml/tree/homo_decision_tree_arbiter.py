@@ -32,7 +32,8 @@ LOGGER = log_utils.getLogger()
 
 class HomoDecisionTreeArbiter(DecisionTree):
 
-    def __init__(self, tree_param: DecisionTreeModelParam, valid_feature: dict, epoch_idx: int, flow_id: int):
+    def __init__(self, tree_param: DecisionTreeModelParam, valid_feature: dict, epoch_idx: int,
+                 tree_idx: int, flow_id: int):
 
         super(HomoDecisionTreeArbiter, self).__init__(tree_param)
         self.splitter = Splitter(self.criterion_method, self.criterion_params, self.min_impurity_split,
@@ -50,9 +51,8 @@ class HomoDecisionTreeArbiter(DecisionTree):
 
         self.runtime_idx = 0
         self.sitename = consts.ARBITER
-        self.feature_importances_ = {}
         self.epoch_idx = epoch_idx
-
+        self.tree_idx = tree_idx
         # secure aggregator
         self.set_flowid(flow_id)
         self.aggregator = SecureBoostArbiterAggregator(transfer_variable=self.transfer_inst)
@@ -60,25 +60,6 @@ class HomoDecisionTreeArbiter(DecisionTree):
     def set_flowid(self, flowid=0):
         LOGGER.info("set flowid, flowid is {}".format(flowid))
         self.transfer_inst.set_flowid(flowid)
-
-    def update_feature_importance(self, split_info: List[SplitInfo]):
-
-        for splitinfo in split_info:
-
-            if self.feature_importance_type == "split":
-                inc = 1
-            elif self.feature_importance_type == "gain":
-                inc = splitinfo.gain
-            else:
-                raise ValueError("feature importance type {} not support yet".format(self.feature_importance_type))
-
-            sitename = splitinfo.sitename
-            fid = splitinfo.best_fid
-
-            if (sitename, fid) not in self.feature_importances_:
-                self.feature_importances_[(sitename, fid)] = 0
-
-            self.feature_importances_[(sitename, fid)] += inc
 
     def sync_node_sample_numbers(self, suffix):
         cur_layer_node_num = self.transfer_inst.cur_layer_node_num.get(-1,suffix=suffix)
@@ -89,32 +70,28 @@ class HomoDecisionTreeArbiter(DecisionTree):
     def federated_find_best_split(self, node_histograms, parallel_partitions=10) -> List[SplitInfo]:
 
         # node histograms [[HistogramBag,HistogramBag,...],[HistogramBag,HistogramBag,....],..]
-
         LOGGER.debug('federated finding best splits,histograms from {} guest received'.format(len(node_histograms)))
         LOGGER.debug('aggregating histograms .....')
         acc_histogram = node_histograms
-        best_splits = self.splitter.find_split(acc_histogram,self.valid_features,parallel_partitions,
-                                               self.sitename,self.use_missing,self.zero_as_missing)
-        # mock splitting
+        best_splits = self.splitter.find_split(acc_histogram, self.valid_features, parallel_partitions,
+                                               self.sitename, self.use_missing, self.zero_as_missing)
         return best_splits
 
     def sync_best_splits(self, split_info, suffix):
         LOGGER.debug('sending best split points')
-        self.transfer_inst.best_split_points.remote(split_info,idx=-1,suffix=suffix)
+        self.transfer_inst.best_split_points.remote(split_info,idx=-1, suffix=suffix)
 
     def sync_local_histogram(self, suffix) -> List[HistogramBag]:
         LOGGER.debug('get local histograms')
         node_local_histogram = self.aggregator.aggregate_histogram(suffix=suffix)
-        # node_local_histogram = self.transfer_inst.local_histogram.get(idx=-1,suffix=suffix,)
         LOGGER.debug('num of histograms {}'.format(len(node_local_histogram)))
-
         return node_local_histogram
 
     def fit(self):
 
-        LOGGER.info('begin to fit homo decision tree')
+        LOGGER.info('begin to fit homo decision tree, epoch {}, tree idx {}'.format(self.epoch_idx, self.tree_idx))
 
-        g_sum,h_sum = self.aggregator.aggregate_root_node_info(suffix=('root_node_sync1',self.epoch_idx))
+        g_sum, h_sum = self.aggregator.aggregate_root_node_info(suffix=('root_node_sync1',self.epoch_idx))
         LOGGER.debug('g_sum is {},h_sum is {}'.format(g_sum,h_sum))
         self.aggregator.broadcast_root_info(g_sum,h_sum,suffix=('root_node_sync2',self.epoch_idx))
 
@@ -127,16 +104,16 @@ class HomoDecisionTreeArbiter(DecisionTree):
 
             split_info = []
             # get cur layer node num:
-            cur_layer_node_num = self.sync_node_sample_numbers(suffix=(dep,self.epoch_idx))
+            cur_layer_node_num = self.sync_node_sample_numbers(suffix=(dep, self.epoch_idx, self.tree_idx))
             LOGGER.debug('we have {} nodes to split at this layer'.format(cur_layer_node_num))
-            for batch_id,i in enumerate(range(0,cur_layer_node_num,self.max_split_nodes)):
-                node_local_histogram = self.sync_local_histogram(suffix=(batch_id,dep,self.epoch_idx))
+            for batch_id,i in enumerate(range(0, cur_layer_node_num, self.max_split_nodes)):
+                node_local_histogram = self.sync_local_histogram(suffix=(batch_id, dep, self.epoch_idx, self.tree_idx))
                 best_splits = self.federated_find_best_split(node_local_histogram,parallel_partitions=10)
                 split_info += best_splits
 
             LOGGER.debug('best_splits found')
             LOGGER.debug(split_info)
-            self.sync_best_splits(split_info, suffix=(dep,self.epoch_idx))
+            self.sync_best_splits(split_info, suffix=(dep, self.epoch_idx))
             LOGGER.debug('best_splits_sent')
 
     def predict(self, data_inst=None):

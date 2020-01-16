@@ -53,6 +53,4 @@ class XgboostCriterion(Criterion):
         return sum_grad * sum_grad / (sum_hess + self.reg_lambda)
 
     def node_weight(self, sum_grad, sum_hess):
-        LOGGER.debug('computing weights')
-        LOGGER.debug('g:{} reg:{} h:{} reg+h{}'.format(-sum_grad,self.reg_lambda,sum_hess,self.reg_lambda+sum_hess))
         return -sum_grad / (self.reg_lambda + sum_hess)

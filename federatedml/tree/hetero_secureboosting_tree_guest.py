@@ -320,6 +320,7 @@ class HeteroSecureBoostingTreeGuest(BoostingTree):
 
         for i in range(self.num_trees):
             self.compute_grad_and_hess()
+
             for tidx in range(self.tree_dim):
                 tree_inst = HeteroDecisionTreeGuest(self.tree_param)
 

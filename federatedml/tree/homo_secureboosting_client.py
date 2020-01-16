@@ -4,9 +4,6 @@ from federatedml.param.feature_binning_param import FeatureBinningParam
 from federatedml.tree import BoostingTree
 from federatedml.transfer_variable.transfer_class.homo_secure_boost_transfer_variable import \
     HomoSecureBoostingTreeTransferVariable
-from federatedml.transfer_variable.transfer_class.homo_decision_tree_transfer_variable import \
-    HomoDecisionTreeTransferVariable
-from federatedml.tree.homo_secureboosting_aggregator import SecureBoostClientAggregator
 from federatedml.util import consts
 from federatedml.loss import SigmoidBinaryCrossEntropyLoss
 from federatedml.loss import SoftmaxCrossEntropyLoss
@@ -27,6 +24,8 @@ from typing import List, Tuple, Dict
 from arch.api.table.eggroll.table_impl import DTable
 import numpy as np
 from arch.api.utils import log_utils
+
+from federatedml.util.classify_label_checker import ClassifyLabelChecker, RegressionLabelChecker
 
 LOGGER = log_utils.getLogger()
 
@@ -73,7 +72,7 @@ class FakeBinning():
 
         func = functools.partial(self.helper, split_points=self.split_points)
         new_table = Dtable.mapValues(func)
-        return new_table, self.split_points, {k:0 for k in range(self.bin_num)}
+        return new_table, self.split_points, {k: 0 for k in range(self.bin_num)}
 
 # LOGGER = LocalTestLogger()
 
@@ -89,13 +88,16 @@ class HomoSecureBoostingTreeClient(BoostingTree):
         self.y = None
         self.y_hat = None
         self.y_hat_predict = None
-        self.tree_dim = 1
         self.feature_num = None
         self.num_classes = 2
+        self.tree_dim = 1
         self.trees = []
+        self.feature_importance = {}
         self.transfer_inst = HomoSecureBoostingTreeTransferVariable()
         self.role = None
-
+        self.binned_data = None
+        self.bin_split_points = None
+        self.bin_sparse_points = None
 
     def set_loss_function(self, objective_param):
         loss_type = objective_param.objective
@@ -130,16 +132,6 @@ class HomoSecureBoostingTreeClient(BoostingTree):
     def federated_binning(self,  data_instance) -> Tuple[DTable, np.array, dict]:
 
         # federated binning
-
-        # LOGGER.info('convert feature to bin')
-        # parameter = FeatureBinningParam(bin_num=self.bin_num)
-        # binning_obj = QuantileBinning(parameter , abnormal_list=[NoneType()] if self.use_missing else None)
-        # binning_obj.fit_split_points(data_instance)
-        # binned_data, bin_split_points, bin_sparse_points = binning_obj.convert_feature_to_bin(data_instance)
-        #
-        # LOGGER.info('converting feature to bin done')
-        # return binned_data , bin_split_points , bin_sparse_points
-
         binning = FakeBinning(bin_num=10)
         return binning.fit(data_instance)
 
@@ -147,17 +139,17 @@ class HomoSecureBoostingTreeClient(BoostingTree):
 
         loss_method = self.loss_fn
         if self.task_type == consts.CLASSIFICATION:
-            grad_and_hess = self.y.join(y_hat,  lambda y,  f_val: \
-                (loss_method.compute_grad(y,  loss_method.predict(f_val)),  \
+            grad_and_hess = self.y.join(y_hat, lambda y,  f_val:\
+                (loss_method.compute_grad(y,  loss_method.predict(f_val)),\
                  loss_method.compute_hess(y,  loss_method.predict(f_val))))
         else:
-            grad_and_hess = self.y.join(y_hat,  lambda y,  f_val:
+            grad_and_hess = self.y.join(y_hat, lambda y,  f_val:
             (loss_method.compute_grad(y,  f_val), 
              loss_method.compute_hess(y,  f_val)))
 
         return grad_and_hess
 
-    def compute_local_loss(self , y :DTable , y_hat :DTable):
+    def compute_local_loss(self, y: DTable, y_hat: DTable):
 
         LOGGER.info('computing local loss')
 
@@ -167,18 +159,30 @@ class HomoSecureBoostingTreeClient(BoostingTree):
             y_predict = y_hat
         else:
             # classification tasks
-            y_predict = y_hat.mapValues(lambda val :loss_method.predict(val))
+            y_predict = y_hat.mapValues(lambda val: loss_method.predict(val))
 
-        loss = loss_method.compute_loss(y , y_predict)
+        loss = loss_method.compute_loss(y, y_predict)
 
         return float(loss)
+
+    def get_subtree_grad_and_hess(self, g_h: DTable, t_idx: int):
+        """
+        Args:
+            g_h: DTable of g_h val
+            t_idx: tree index
+        Returns: grad and hess of sub tree
+        """
+        LOGGER.info("get grad and hess of tree {}".format(t_idx))
+        grad_and_hess_subtree = g_h.mapValues(
+            lambda grad_and_hess: (grad_and_hess[0][t_idx], grad_and_hess[1][t_idx]))
+        return grad_and_hess_subtree
 
     def sample_valid_feature(self):
 
         if self.feature_num is None:
             self.feature_num = self.bin_split_points.shape[0]
 
-        chosen_feature = random.choice(range(0,  self.feature_num),  \
+        chosen_feature = random.choice(range(0,  self.feature_num), \
                                        max(1,  int(self.subsample_feature_rate * self.feature_num)),  replace=False)
         valid_features = [False for i in range(self.feature_num)]
         for fid in chosen_feature:
@@ -187,7 +191,7 @@ class HomoSecureBoostingTreeClient(BoostingTree):
         return valid_features
 
     @staticmethod
-    def add_y_hat(f_val , new_f_val , lr=0.1 , idx=0):
+    def add_y_hat(f_val, new_f_val, lr=0.1, idx=0):
         f_val[idx] += lr * new_f_val
         return f_val
 
@@ -204,44 +208,108 @@ class HomoSecureBoostingTreeClient(BoostingTree):
         else:
             self.y_hat_predict = self.y_hat_predict.join(new_val, add_func)
 
+    def update_feature_importance(self, tree_feature_importance):
+        for fid in tree_feature_importance:
+            if fid not in self.feature_importance:
+                self.feature_importance[fid] = 0
+            self.feature_importance[fid] += tree_feature_importance[fid]
+
     def sync_feature_num(self):
-        self.transfer_inst.feature_number.remote(self.feature_num, role=consts.ARBITER, idx=-1, suffix=(0, ))
+        self.transfer_inst.feature_number.remote(self.feature_num, role=consts.ARBITER, idx=-1, suffix=('feat_num', ))
 
-    def fit(self,  data_inst:DTable, validate_data=None):
+    def sync_local_loss(self, cur_loss: float, sample_num: int,suffix):
+        data = {'cur_loss': cur_loss, 'sample_num': sample_num}
+        self.transfer_inst.loss_status.remote(data, role=consts.ARBITER, idx=-1, suffix=suffix)
+        LOGGER.debug('loss status sent')
 
-        # data_inst = self.data_alignment(data_inst)
+    def sync_tree_dim(self, tree_dim: int):
+        self.transfer_inst.tree_dim.remote(tree_dim,suffix=('tree_dim', ))
+        LOGGER.debug('tree dim sent')
 
-        # sample num
-        LOGGER.debug('sample number is {}'.format(data_inst.count()))
+    def sync_stop_flag(self, suffix) -> bool:
+        flag = self.transfer_inst.stop_flag.get(idx=0,suffix=suffix)
+        return flag
+
+    def check_labels(self, data_inst: DTable, ) -> List[int]:
+
+        LOGGER.debug('checking labels')
+
+        classes_ = None
+        if self.task_type == consts.CLASSIFICATION:
+            num_classes, classes_ = ClassifyLabelChecker.validate_label(data_inst)
+        else:
+            RegressionLabelChecker.validate_label(data_inst)
+
+        return classes_
+
+    def generate_flowid(self, round_num, tree_num):
+        LOGGER.info("generate flowid, flowid {}".format(self.flowid))
+        return ".".join(map(str, [self.flowid, round_num, tree_num]))
+
+    def label_alignment(self, labels: List[int], suffix):
+        self.transfer_inst.local_labels.remote(labels, suffix=('label_align', ))
+
+
+    def fit(self,  data_inst:DTable, validate_data=None,):
 
         # binning
-        self.binned_data , self.bin_split_points , self.bin_sparse_points = self.federated_binning(data_inst)
+        # data_inst = self.data_alignment(data_inst)
+        self.binned_data, self.bin_split_points, self.bin_sparse_points = self.federated_binning(data_inst)
+
         # set feature_num
         self.feature_num = self.bin_split_points.shape[0]
-        # sending feature number to host
+
+        # sync feature num
         self.sync_feature_num()
+
+        # check labels
+        local_classes = self.check_labels(self.binned_data)
+        if self.task_type == consts.CLASSIFICATION:
+            self.transfer_inst.local_labels.remote(local_classes, role=consts.ARBITER, suffix=('label_align', ))
+            new_label_mapping = self.transfer_inst.label_mapping.get(idx=0, suffix=('label_mapping', ))
+            # set labels
+            self.num_classes = len(new_label_mapping)
+            self.y = self.binned_data.mapValues(lambda instance: new_label_mapping[instance.label])
+            # set tree dimension
+            self.tree_dim = self.num_classes if self.num_classes > 2 else 1
+
         # set loss function
         self.set_loss_function(self.objective_param)
-        # set labels
-        self.y = self.binned_data.mapValues(lambda instance :instance.label)
+
         # set y_hat_val
-        self.y_hat,  self.init_score = self.loss_fn.initialize(self.y) if self.tree_dim == 1 else \
-            self.loss_fn.initialize(self.y,  self.tree_dim)
+        self.y_hat, self.init_score = self.loss_fn.initialize(self.y) if self.tree_dim == 1 else \
+            self.loss_fn.initialize(self.y, self.tree_dim)
 
         for epoch_idx in range(self.num_trees):
 
             g_h = self.compute_local_grad_and_hess(self.y_hat)
             valid_features = self.sample_valid_feature()
-            new_tree = HomoDecisionTreeClient(self.tree_param,  self.binned_data,  self.bin_split_points, 
-                                              self.bin_sparse_points,  g_h,  valid_feature=valid_features
-                                              ,epoch_idx=epoch_idx, role=self.role, flow_id=epoch_idx)
-            new_tree.fit()
-            self.update_y_hat_val(new_val=new_tree.sample_weights,  mode='train',  tree_idx=0)
-            self.trees.append(new_tree)
-            loss = self.compute_local_loss(self.y , self.y_hat)
+            for t_idx in range(self.tree_dim):
+                subtree_g_h = self.get_subtree_grad_and_hess(g_h, t_idx)
+                flow_id = self.generate_flowid(epoch_idx, t_idx)
+                new_tree = HomoDecisionTreeClient(self.tree_param, self.binned_data, self.bin_split_points,
+                                                  self.bin_sparse_points, subtree_g_h, valid_feature=valid_features
+                                                  , epoch_idx=epoch_idx, role=self.role, flow_id=flow_id, tree_idx=\
+                                                  t_idx)
+                new_tree.fit()
 
-            LOGGER.debug('predicted val')
-            LOGGER.debug(list(self.y_hat.collect()))
+                # update y_hat_val
+                self.update_y_hat_val(new_val=new_tree.sample_weights, mode='train', tree_idx=t_idx)
+                self.trees.append(new_tree)
+                self.update_feature_importance(new_tree.get_feature_importance())
+
+            # sync loss status
+            loss = self.compute_local_loss(self.y, self.y_hat)
+            self.sync_local_loss(loss, self.binned_data.count(), suffix=(epoch_idx, ))
+
+            # check stop flag if n_iter_no_change is True
+            if self.n_iter_no_change:
+                should_stop = self.sync_stop_flag(suffix=(epoch_idx, ))
+                LOGGER.debug('got stop flag {}'.format(should_stop))
+                if should_stop:
+                    LOGGER.debug('stop triggered')
+                    break
+
             LOGGER.debug('fitting one tree done, cur local loss is {}'.format(loss))
 
     def predict(self,  data_inst:DTable):
@@ -257,7 +325,7 @@ class HomoSecureBoostingTreeClient(BoostingTree):
         predict_result = None
         if self.task_type == consts.REGRESSION and \
                 self.objective_param.objective in ["lse",  "lae",  "huber",  "log_cosh",  "fair",  "tweedie"]:
-            predict_result = data_inst.join(self.y_hat_predict, \
+            predict_result = data_inst.join(self.y_hat_predict,\
                                     lambda inst,  pred: [inst.label,  float(pred),  float(pred),  {"label": float(pred)}])
 
         elif self.task_type == consts.CLASSIFICATION:

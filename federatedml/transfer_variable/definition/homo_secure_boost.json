@@ -11,6 +11,30 @@
       "dst": [
         "arbiter"
       ]
+    },
+    "loss_status": {
+      "src": ["guest","host"],
+      "dst":[
+        "arbiter"
+      ]
+    },
+    "stop_flag": {
+      "src": "arbiter",
+      "dst": [
+        "guest","host"
+      ]
+    },
+    "local_labels": {
+      "src": [
+        "guest","host"
+      ],
+      "dst": "arbiter"
+    },
+    "label_mapping": {
+      "src": "arbiter",
+      "dst": [
+        "guest","host"
+      ]
     }
   }
 }

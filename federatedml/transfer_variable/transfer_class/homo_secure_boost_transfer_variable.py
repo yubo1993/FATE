@@ -31,4 +31,8 @@ class HomoSecureBoostingTreeTransferVariable(BaseTransferVariables):
     def __init__(self, flowid=0):
         super().__init__(flowid)
         self.feature_number = self._create_variable(name='feature_number')
+        self.label_mapping = self._create_variable(name='label_mapping')
+        self.local_labels = self._create_variable(name='local_labels')
+        self.loss_status = self._create_variable(name='loss_status')
+        self.stop_flag = self._create_variable(name='stop_flag')
         self.tree_dim = self._create_variable(name='tree_dim')
