@@ -34,8 +34,8 @@ LOGGER = log_utils.getLogger()
 
 class HomoDecisionTreeClient(DecisionTree):
 
-    def __init__(self,tree_param:DecisionTreeParam,binned_data:DTable,bin_split_points:np.array,bin_sparse_point,g_h:DTable
-                 ,valid_feature:dict,epoch_idx:int,role:str,flow_id:int):
+    def __init__(self, tree_param: DecisionTreeParam, binned_data: DTable, bin_split_points: np.array, bin_sparse_point,
+                 g_h: DTable, valid_feature: dict, epoch_idx: int, role: str, flow_id: int):
 
         """
         Parameters
@@ -84,7 +84,7 @@ class HomoDecisionTreeClient(DecisionTree):
         assert role == consts.HOST or role == consts.GUEST
         self.role = role
         self.set_flowid(flow_id)
-        self.aggregator = SecureBoostClientAggregator(role=self.role,transfer_variable=self.transfer_inst)
+        self.aggregator = SecureBoostClientAggregator(role=self.role, transfer_variable=self.transfer_inst)
 
     def set_flowid(self, flowid=0):
         LOGGER.info("set flowid, flowid is {}".format(flowid))
@@ -96,7 +96,7 @@ class HomoDecisionTreeClient(DecisionTree):
             lambda value1, value2: (value1[0] + value2[0], value1[1] + value2[1]))
         return grad, hess
 
-    def update_feature_importance(self,split_info:List[SplitInfo]):
+    def update_feature_importance(self, split_info: List[SplitInfo]):
 
         for splitinfo in split_info:
 
@@ -115,13 +115,13 @@ class HomoDecisionTreeClient(DecisionTree):
 
             self.feature_importances_[(sitename, fid)] += inc
 
-    def sync_local_node_histogram(self, acc_histogram:List[HistogramBag], suffix):
+    def sync_local_node_histogram(self, acc_histogram: List[HistogramBag], suffix):
         # sending local histogram
         self.aggregator.send_histogram(acc_histogram,suffix=suffix)
         LOGGER.debug('local histogram sent at layer {}'.format(suffix[0]))
 
 
-    def get_local_histogram(self,node_map,g_h,table_with_assign,split_points,sparse_point,
+    def get_local_histogram(self, node_map, g_h, table_with_assign, split_points, sparse_point,
                             valid_feature):
         LOGGER.info("start to get node histograms")
         histograms = FeatureHistogram.calculate_histogram(
@@ -133,7 +133,7 @@ class HomoDecisionTreeClient(DecisionTree):
         acc_histograms = FeatureHistogram.accumulate_histogram(histograms)
         return acc_histograms
 
-    def update_tree(self,cur_to_split:List[Node],split_info:List[SplitInfo]):
+    def update_tree(self, cur_to_split: List[Node], split_info: List[SplitInfo]):
         """
         update current tree structure
         ----------
@@ -187,10 +187,10 @@ class HomoDecisionTreeClient(DecisionTree):
             if not node.is_leaf:
                 node.bid = self.bin_split_points[node.fid][node.bid]
 
-    def assign_instance_to_root_node(self,binned_data:DTable,root_node_id):
-        return binned_data.mapValues(lambda inst:(1,root_node_id))
+    def assign_instance_to_root_node(self, binned_data: DTable, root_node_id):
+        return binned_data.mapValues(lambda inst: (1, root_node_id))
 
-    def assign_a_instance(self,row,tree:List[Node],bin_sparse_point,use_missing,use_zero_as_missing):
+    def assign_a_instance(self, row, tree: List[Node], bin_sparse_point, use_missing, use_zero_as_missing):
 
         leaf_status,nodeid = row[1]
         node = tree[nodeid]
@@ -221,7 +221,6 @@ class HomoDecisionTreeClient(DecisionTree):
             else:
                 return 1, tree[nodeid].right_nodeid
 
-
     def assign_instance_to_new_node(self, table_with_assignment:DTable, tree_node:List[Node]):
 
         LOGGER.debug('re-assign instance to new nodes')
@@ -235,21 +234,21 @@ class HomoDecisionTreeClient(DecisionTree):
 
         return assign_result,leaf_val
 
-    def get_node_sample_weights(self, inst2node:DTable, tree_node:List[Node]):
+    def get_node_sample_weights(self, inst2node: DTable, tree_node: List[Node]):
         """
         get samples' weights which correspond to its node assignment
         """
-        func = lambda inst,tree_node:tree_node[inst[1]].weight
+        func = lambda inst, tree_node: tree_node[inst[1]].weight
         func = functools.partial(func,tree_node=tree_node)
         return inst2node.mapValues(func)
 
     def sync_tree(self,):
         pass
 
-    def sync_cur_layer_node_num(self,node_num,suffix):
+    def sync_cur_layer_node_num(self,node_num, suffix):
         self.transfer_inst.cur_layer_node_num.remote(node_num,role=consts.ARBITER,idx=-1,suffix=suffix)
 
-    def sync_best_splits(self,suffix) -> List[SplitInfo]:
+    def sync_best_splits(self, suffix) -> List[SplitInfo]:
 
         best_splits = self.transfer_inst.best_split_points.get(idx=0,suffix=suffix)
         return best_splits
@@ -349,9 +348,9 @@ class HomoDecisionTreeClient(DecisionTree):
         # self.print_leafs()
 
 
-    def traverse_tree(self,data_inst:Instance,tree:List[Node],use_missing=True,zero_as_missing=True):
+    def traverse_tree(self, data_inst: Instance, tree: List[Node], use_missing=True, zero_as_missing=True):
 
-        nid = 0 # root node id
+        nid = 0# root node id
         while True:
 
             if tree[nid].is_leaf:
@@ -381,8 +380,7 @@ class HomoDecisionTreeClient(DecisionTree):
             else:
                 nid = tree[nid].right_nodeid
 
-
-    def predict(self,data_inst:DTable):
+    def predict(self, data_inst: DTable):
 
         LOGGER.debug('tree start to predict')
 
@@ -402,12 +400,12 @@ class HomoDecisionTreeClient(DecisionTree):
         for node in self.tree_node:
             LOGGER.debug(node)
 
-    def print_split(self,split_infos:[SplitInfo]):
+    def print_split(self, split_infos: [SplitInfo]):
         LOGGER.debug('printing split info')
         for info in split_infos:
             LOGGER.debug(info)
 
-    def print_hist(self,hist_list:[HistogramBag]):
+    def print_hist(self, hist_list: [HistogramBag]):
         LOGGER.debug('printing histogramBag')
         for bag in hist_list:
             LOGGER.debug(bag)

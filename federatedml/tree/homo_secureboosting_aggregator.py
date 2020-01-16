@@ -19,10 +19,10 @@ class SecureBoostArbiterAggregator():
         self.aggregator.register_aggregator(transfer_variable,enable_secure_aggregate=True)
         self.verbose = self.verbose
 
-    def aggregate_num(self,suffix,):
+    def aggregate_num(self, suffix):
         self.aggregator.aggregate_loss(idx=-1,suffix=suffix)
 
-    def aggregate_histogram(self,suffix) -> List[HistogramBag]:
+    def aggregate_histogram(self, suffix) -> List[HistogramBag]:
         received_data = self.aggregator.get_models_for_aggregate(ciphers_dict=None,suffix=suffix)
         LOGGER.debug('showing received data')
 
@@ -40,14 +40,14 @@ class SecureBoostArbiterAggregator():
     def broadcast_best_splits(self):
         pass
 
-    def aggregate_root_node_info(self,suffix):
+    def aggregate_root_node_info(self, suffix):
 
         data = self.aggregator.get_models_for_aggregate(ciphers_dict=None, suffix=suffix)
         agg_data, total_degree = reduce(lambda x, y: (x[0] + y[0], x[1] + y[1]), data)
         d = agg_data._weights
         return d['g_sum'],d['h_sum']
 
-    def broadcast_root_info(self,g_sum,h_sum,suffix):
+    def broadcast_root_info(self, g_sum, h_sum, suffix):
         d = {'g_sum':g_sum,'h_sum':h_sum}
         weight = DictWeights(d=d,)
         self.aggregator.send_aggregated_model(weight,suffix=suffix)
@@ -59,7 +59,7 @@ class SecureBoostClientAggregator():
     secure aggregator for secureboosting Client, send histogram and numbers
     """
 
-    def __init__(self,role,transfer_variable,verbose=False):
+    def __init__(self, role, transfer_variable, verbose=False):
         self.aggregator = None
         if role == consts.GUEST:
             self.aggregator = aggregator.Guest()
@@ -69,10 +69,10 @@ class SecureBoostClientAggregator():
         self.aggregator.register_aggregator(transfer_variable,enable_secure_aggregate=True)
         self.verbose = verbose
 
-    def send_number(self,number:float,degree:int,suffix):
+    def send_number(self, number: float, degree: int,suffix):
         self.aggregator.send_loss(number,degree,suffix=suffix)
 
-    def send_histogram(self,hist:List[HistogramBag],suffix):
+    def send_histogram(self, hist: List[HistogramBag], suffix):
         if self.verbose:
             for idx, histbag in enumerate(hist):
                 LOGGER.debug('showing client hist {}'.format(idx))
@@ -80,15 +80,15 @@ class SecureBoostClientAggregator():
         weights = FeatureHistogramWeights(list_of_histogrambags=hist)
         self.aggregator.send_model(weights,degree=1,suffix=suffix)
 
-    def get_aggregated_root_info(self,suffix) -> Dict:
+    def get_aggregated_root_info(self, suffix) -> Dict:
         dict_weight = self.aggregator.get_aggregated_model(suffix=suffix)
         content = dict_weight._weights
         return content
 
-    def send_local_root_node_info(self,g_sum,h_sum,suffix):
-        d = {'g_sum':g_sum,'h_sum':h_sum,}
+    def send_local_root_node_info(self, g_sum, h_sum, suffix):
+        d = {'g_sum': g_sum, 'h_sum': h_sum}
         dict_weights = DictWeights(d=d)
-        self.aggregator.send_model(dict_weights,suffix=suffix)
+        self.aggregator.send_model(dict_weights, suffix=suffix)
 
     def get_best_split_points(self):
         pass

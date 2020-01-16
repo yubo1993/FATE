@@ -32,7 +32,7 @@ LOGGER = log_utils.getLogger()
 
 class HomoDecisionTreeArbiter(DecisionTree):
 
-    def __init__(self,tree_param:DecisionTreeModelParam,valid_feature:dict,epoch_idx:int,flow_id:int):
+    def __init__(self, tree_param: DecisionTreeModelParam, valid_feature: dict, epoch_idx: int, flow_id: int):
 
         super(HomoDecisionTreeArbiter, self).__init__(tree_param)
         self.splitter = Splitter(self.criterion_method, self.criterion_params, self.min_impurity_split,
@@ -57,12 +57,11 @@ class HomoDecisionTreeArbiter(DecisionTree):
         self.set_flowid(flow_id)
         self.aggregator = SecureBoostArbiterAggregator(transfer_variable=self.transfer_inst)
 
-
     def set_flowid(self, flowid=0):
         LOGGER.info("set flowid, flowid is {}".format(flowid))
         self.transfer_inst.set_flowid(flowid)
 
-    def update_feature_importance(self,split_info:List[SplitInfo]):
+    def update_feature_importance(self, split_info: List[SplitInfo]):
 
         for splitinfo in split_info:
 
@@ -81,13 +80,13 @@ class HomoDecisionTreeArbiter(DecisionTree):
 
             self.feature_importances_[(sitename, fid)] += inc
 
-    def sync_node_sample_numbers(self,suffix):
+    def sync_node_sample_numbers(self, suffix):
         cur_layer_node_num = self.transfer_inst.cur_layer_node_num.get(-1,suffix=suffix)
         for num in cur_layer_node_num[1:]:
             assert num == cur_layer_node_num[0]
         return cur_layer_node_num[0]
 
-    def federated_find_best_split(self,node_histograms,parallel_partitions=10) -> List[SplitInfo]:
+    def federated_find_best_split(self, node_histograms, parallel_partitions=10) -> List[SplitInfo]:
 
         # node histograms [[HistogramBag,HistogramBag,...],[HistogramBag,HistogramBag,....],..]
 
@@ -99,7 +98,7 @@ class HomoDecisionTreeArbiter(DecisionTree):
         # mock splitting
         return best_splits
 
-    def sync_best_splits(self,split_info,suffix):
+    def sync_best_splits(self, split_info, suffix):
         LOGGER.debug('sending best split points')
         self.transfer_inst.best_split_points.remote(split_info,idx=-1,suffix=suffix)
 
