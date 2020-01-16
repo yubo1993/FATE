@@ -63,6 +63,8 @@ USE_LOCAL_DATABASE = True
 USE_AUTHENTICATION = False
 USE_CONFIGURATION_CENTER = False
 PRIVILEGE_COMMAND_WHITELIST = []
+CHECK_NODES_IDENTITY = False
+PRIVILEGE_COMMAND_WHITELIST = []
 
 DATABASE = {
     'name': 'fate_flow',
@@ -93,6 +95,8 @@ BOARD_HOST = server_conf.get(SERVERS).get('fateboard').get('host')
 if BOARD_HOST == 'localhost':
     BOARD_HOST = get_lan_ip()
 BOARD_PORT = server_conf.get(SERVERS).get('fateboard').get('port')
+MANAGER_HOST = server_conf.get(SERVERS).get('fatemanager', {}).get('host')
+MANAGER_PORT = server_conf.get(SERVERS).get('fatemanager', {}).get('port')
 SERVINGS = CenterConfig.get_settings(path='/servers/servings', servings_zk_path=SERVINGS_ZK_PATH,
                                      use_zk=USE_CONFIGURATION_CENTER, hosts=ZOOKEEPER_HOSTS)
 BOARD_DASHBOARD_URL = 'http://%s:%d/index.html#/dashboard?job_id={}&role={}&party_id={}' % (BOARD_HOST, BOARD_PORT)
