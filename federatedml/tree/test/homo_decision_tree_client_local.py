@@ -93,7 +93,7 @@ class HomoDecisionTreeClient(DecisionTree):
             lambda value1, value2: (value1[0] + value2[0], value1[1] + value2[1]))
         return grad, hess
 
-    def update_feature_importance(self,split_info:List[SplitInfo]):
+    def update_feature_importance(self, split_info: List[SplitInfo]):
 
         for splitinfo in split_info:
 
@@ -112,17 +112,17 @@ class HomoDecisionTreeClient(DecisionTree):
 
             self.feature_importances_[(sitename, fid)] += inc
 
-    def sync_local_node_histogram(self, acc_histogram:List[HistogramBag], suffix):
+    def sync_local_node_histogram(self, acc_histogram: List[HistogramBag], suffix):
         # sending local histogram
         # self.transfer_inst.local_histogram.remote(acc_histogram,role=consts.ARBITER,idx=-1,suffix=suffix)
         # LOGGER.debug(acc_histogram[0])
-        self.aggregator.send_histogram(acc_histogram,suffix=suffix)
+        self.aggregator.send_histogram(acc_histogram, suffix=suffix)
         LOGGER.debug('local histogram sent at layer {}'.format(suffix[0]))
         # best_splits = self.splitter.find_split(acc_histogram,self.valid_features,self.binned_data._partitions,
         #                                        self.sitename,self.use_missing,self.zero_as_missing)
 
-    def get_local_histogram(self,node_map,g_h,table_with_assign,split_points,sparse_point,
-                            valid_feature):
+    def get_local_histogram(self, cur_nodes: List[Node], tree: List[Node], node_map, g_h, table_with_assign,
+                            split_points, sparse_point, valid_feature):
         LOGGER.info("start to get node histograms")
         histograms = FeatureHistogram.calculate_histogram(
             table_with_assign, g_h,
@@ -131,15 +131,36 @@ class HomoDecisionTreeClient(DecisionTree):
             self.use_missing, self.zero_as_missing)
         LOGGER.info("begin to accumulate histograms")
         acc_histograms = FeatureHistogram.accumulate_histogram(histograms)
-        return acc_histograms
 
-    def update_tree(self,cur_to_split:List[Node],split_info:List[SplitInfo]):
+        # histogram subtraction
+        full_acc_histograms = []
+        for idx, hist_bag in enumerate(acc_histograms):
+
+            node = cur_nodes[idx]
+
+            if node.id == 0:
+                full_acc_histograms.append(hist_bag)
+                break
+
+            parent_node = tree[node.parent_nodeid]
+            sibling_hist = parent_node.stored_histogram - hist_bag
+            if node.is_left_node:
+                full_acc_histograms.append(hist_bag)
+                full_acc_histograms.append(sibling_hist)
+            else:
+                full_acc_histograms.append(sibling_hist)
+                full_acc_histograms.append(hist_bag)
+
+        return full_acc_histograms
+
+    def update_tree(self, cur_to_split: List[Node], split_info: List[SplitInfo], left_child_sample_num: List[int],
+                    histograms: List[HistogramBag]):
         """
         update current tree structure
         ----------
         split_info
         """
-        LOGGER.debug('updating tree_node, cur layer has {} node,'.format(len(cur_to_split)))
+        LOGGER.debug('updating tree_node, cur layer has {} node'.format(len(cur_to_split)))
         next_layer_node = []
         assert len(cur_to_split) == len(split_info)
         for idx in range(len(cur_to_split)):
@@ -152,30 +173,47 @@ class HomoDecisionTreeClient(DecisionTree):
 
             cur_to_split[idx].fid = split_info[idx].best_fid
             cur_to_split[idx].bid = split_info[idx].best_bid
+            cur_to_split[idx].missing_dir = split_info[idx].missing_dir
+            cur_to_split[idx].stored_histogram = histograms[idx]
 
-            l_id,r_id = self.tree_node_num + 1,self.tree_node_num + 2
-            cur_to_split[idx].left_nodeid,cur_to_split[idx].right_nodeid = l_id,r_id
+            p_id = self.tree_node_num
+            l_id, r_id = self.tree_node_num + 1, self.tree_node_num + 2
+            cur_to_split[idx].left_nodeid, cur_to_split[idx].right_nodeid = l_id, r_id
             self.tree_node_num += 2
 
-            l_g,l_h = split_info[idx].sum_grad,split_info[idx].sum_hess
+            l_g, l_h = split_info[idx].sum_grad, split_info[idx].sum_hess
+
+            l_sample_num, r_sample_num = left_child_sample_num[idx], \
+                                         cur_to_split[idx].sample_num - left_child_sample_num[idx]
 
             # create new left node and new right node
             left_node = Node(id=l_id,
                              sitename=self.sitename,
                              sum_grad=l_g,
                              sum_hess=l_h,
-                             weight=self.splitter.node_weight(l_g, l_h))
+                             weight=self.splitter.node_weight(l_g, l_h),
+                             parent_nodeid=p_id,
+                             sibling_nodeid=r_id,
+                             sample_num=l_sample_num,
+                             is_left_node=True)
             right_node = Node(id=r_id,
                               sitename=self.sitename,
                               sum_grad=sum_grad - l_g,
                               sum_hess=sum_hess - l_h,
-                              weight=self.splitter.node_weight(sum_grad - l_g,sum_hess - l_h))
+                              weight=self.splitter.node_weight(sum_grad - l_g, sum_hess - l_h),
+                              parent_nodeid=p_id,
+                              sibling_nodeid=l_id,
+                              sample_num=r_sample_num,
+                              is_left_node=False)
 
             next_layer_node.append(left_node)
             print('append left,cur tree has {} node'.format(len(self.tree_node)))
             next_layer_node.append(right_node)
             print('append right,cur tree has {} node'.format(len(self.tree_node)))
             self.tree_node.append(cur_to_split[idx])
+
+            print('showing node sample num')
+            print(cur_to_split[idx].sample_num, left_node.sample_num, right_node.sample_num)
 
         return next_layer_node
 
@@ -187,12 +225,12 @@ class HomoDecisionTreeClient(DecisionTree):
             if not node.is_leaf:
                 node.bid = self.bin_split_points[node.fid][node.bid]
 
-    def assign_instance_to_root_node(self,binned_data:DTable,root_node_id):
-        return binned_data.mapValues(lambda inst:(1,root_node_id))
+    def assign_instance_to_root_node(self, binned_data: DTable, root_node_id):
+        return binned_data.mapValues(lambda inst: (1, root_node_id))
 
-    def assign_a_instance(self,row,tree:List[Node],bin_sparse_point,use_missing,use_zero_as_missing):
+    def assign_a_instance(self, row, tree: List[Node], bin_sparse_point, use_missing, use_zero_as_missing,):
 
-        leaf_status,nodeid = row[1]
+        leaf_status, nodeid = row[1]
         node = tree[nodeid]
         if node.is_leaf:
             return node.weight
@@ -225,31 +263,36 @@ class HomoDecisionTreeClient(DecisionTree):
     def assign_instance_to_new_node(self, table_with_assignment:DTable, tree_node:List[Node]):
 
         LOGGER.debug('re-assign instance to new nodes')
-        assign_method = functools.partial(self.assign_a_instance,tree=tree_node,bin_sparse_point=
-                                          self.bin_sparse_points,use_missing=self.use_missing,use_zero_as_missing
+
+        assign_method = functools.partial(self.assign_a_instance, tree=tree_node, bin_sparse_point=
+                                          self.bin_sparse_points, use_missing=self.use_missing, use_zero_as_missing
                                           =self.zero_as_missing)
         assign_result = table_with_assignment.mapValues(assign_method)
         leaf_val = assign_result.filter(lambda key, value: isinstance(value, tuple) is False)
 
         assign_result = assign_result.subtractByKey(leaf_val)
 
-        return assign_result,leaf_val
+        return assign_result, leaf_val
 
-    def get_node_sample_weights(self, inst2node:DTable, tree_node:List[Node]):
+    def get_node_sample_weights(self, inst2node: DTable, tree_node: List[Node]):
         """
         get samples' weights which correspond to its node assignment
         """
-        func = lambda inst,tree_node:tree_node[inst[1]].weight
-        func = functools.partial(func,tree_node=tree_node)
+        func = lambda inst, tree_node: tree_node[inst[1]].weight
+        func = functools.partial(func, tree_node=tree_node)
         return inst2node.mapValues(func)
 
-    def sync_tree(self,):
-        pass
+    def get_node_map(self, nodes: List[Node]):
+        node_map = {}
+        for idx, node in enumerate(nodes):
+            if node.id == 0 or node.is_left_node:
+                node_map[node.id] = idx
+        return node_map
 
-    def sync_cur_layer_node_num(self,node_num,suffix):
+    def sync_cur_layer_node_num(self, node_num, suffix):
         self.transfer_inst.cur_layer_node_num.remote(node_num,role=consts.ARBITER,idx=-1,suffix=suffix)
 
-    def sync_best_splits(self,suffix) -> List[SplitInfo]:
+    def sync_best_splits(self, suffix) -> List[SplitInfo]:
         best_splits = self.transfer_inst.best_split_points.get(idx=0,suffix=suffix)
         return best_splits
 
@@ -266,17 +309,17 @@ class HomoDecisionTreeClient(DecisionTree):
         # g_h_dict = self.aggregator.get_aggregated_root_info(suffix=('root_node_sync2',self.epoch_idx))
         # g_sum,h_sum = g_h_dict['g_sum'],g_h_dict['h_sum']
 
-        g_sum *= 2
-        h_sum *= 2
+        # g_sum *= 2
+        # h_sum *= 2
 
         print('gsum_is {}, h_sum is {}'.format(g_sum, h_sum))
 
         root_node = Node(id=0, sitename=consts.GUEST, sum_grad=g_sum, sum_hess=h_sum, weight= \
-            self.splitter.node_weight(g_sum, h_sum))
+            self.splitter.node_weight(g_sum, h_sum), sample_num=self.binned_data.count())
 
         self.cur_layer_node = [root_node]
         LOGGER.debug('assign samples to root node')
-        self.inst2node_idx = self.assign_instance_to_root_node(self.binned_data,0)
+        self.inst2node_idx = self.assign_instance_to_root_node(self.binned_data, 0)
 
         for dep in range(self.max_depth):
 
@@ -302,21 +345,28 @@ class HomoDecisionTreeClient(DecisionTree):
             # send current layer node number:
             # self.sync_cur_layer_node_num(len(self.cur_layer_node),suffix=(dep,self.epoch_idx))
 
-            split_info = []
-            for batch_id,i in enumerate(range(0,len(self.cur_layer_node),self.max_split_nodes)):
+            split_info, local_histograms = [], []
+            for batch_id, i in enumerate(range(0, len(self.cur_layer_node), self.max_split_nodes)):
                 cur_to_split = self.cur_layer_node[i:i+self.max_split_nodes]
-
-                node_map = {node.id:idx for idx,node in enumerate(cur_to_split)}
-                LOGGER.debug('computing histogram for batch{} at depth{}'.format(batch_id,dep))
-                acc_histogram = self.get_local_histogram(node_map,self.g_h,table_with_assignment,self.bin_split_points,
-                                                         self.bin_sparse_points,self.valid_features)
+                node_map = self.get_node_map(nodes=cur_to_split)
+                LOGGER.debug('computing histogram for batch{} at depth{}'.format(batch_id, dep))
+                acc_histogram = self.get_local_histogram(
+                    cur_nodes=cur_to_split,
+                    tree=self.tree_node,
+                    node_map=node_map,
+                    g_h=self.g_h,
+                    table_with_assign=table_with_assignment,
+                    split_points=self.bin_split_points,
+                    sparse_point=self.bin_sparse_points,
+                    valid_feature=self.valid_features
+                )
 
                 print('showing histogram')
                 for bag in acc_histogram:
                     print(bag)
-
-                for bag in acc_histogram:
-                    bag.add_inplace(bag)
+                #
+                # for bag in acc_histogram:
+                #     bag.add_inplace(bag)
 
                 LOGGER.debug('federated finding best splits for batch{}'.format(batch_id))
                 # self.sync_local_node_histogram(acc_histogram, suffix=(batch_id, dep, self.epoch_idx))
@@ -324,6 +374,15 @@ class HomoDecisionTreeClient(DecisionTree):
                 # for local testing
                 split_info += self.splitter.find_split(acc_histogram,use_missing=self.use_missing,zero_as_missing=
                                                        self.zero_as_missing,valid_features=self.valid_features)
+                local_histograms += acc_histogram
+
+            left_child_sample_num = []
+            for hist_bag, s_info in zip(local_histograms, split_info):
+                fid, bid = s_info.best_fid, s_info.best_bid
+                bin = hist_bag[fid][bid]
+                left_child_sample_num.append(bin[-1])
+                print('best bin is:')
+                print(bin)
 
 
             # split_info = self.sync_best_splits(suffix=(dep,self.epoch_idx))
@@ -332,11 +391,22 @@ class HomoDecisionTreeClient(DecisionTree):
             for info in split_info:
                 print(info)
 
-            new_layer_node = self.update_tree(self.cur_layer_node,split_info)
+            new_layer_node = self.update_tree(self.cur_layer_node, split_info, left_child_sample_num, histograms=\
+                                              local_histograms)
             self.cur_layer_node = new_layer_node
             self.update_feature_importance(split_info)
 
-            self.inst2node_idx,leaf_val = self.assign_instance_to_new_node(table_with_assignment, self.tree_node)
+            self.inst2node_idx, leaf_val = self.assign_instance_to_new_node(table_with_assignment, self.tree_node)
+
+            t = list(self.inst2node_idx.collect())
+            node_ids = set()
+            for i in t:
+                node_ids.add(i[1][1])
+            count_dict = {v: 0 for v in node_ids}
+            for i in t:
+                count_dict[i[1][1]] += 1
+            print('showing node_sample count')
+            print('count dict is :{}'.format(count_dict))
 
             # record leaf val
             if self.sample_weights is None:

@@ -26,13 +26,13 @@
 # =============================================================================
 
 from federatedml.util import consts
-
+from federatedml.tree.feature_histogram import HistogramBag
 
 class Node(object):
     def __init__(self, id=None, sitename=consts.GUEST, fid=None,
                  bid=None, weight=0, is_leaf=False, sum_grad=None,
                  sum_hess=None, left_nodeid=-1, right_nodeid=-1,
-                 missing_dir=1):
+                 missing_dir=1, sample_num=0, sibling_nodeid=None, parent_nodeid=None, is_left_node=False):
         self.id = id
         self.sitename = sitename
         self.fid = fid
@@ -44,16 +44,24 @@ class Node(object):
         self.left_nodeid = left_nodeid
         self.right_nodeid = right_nodeid
         self.missing_dir = missing_dir
+        self.stored_histogram = None
+        self.sibling_nodeid = sibling_nodeid
+        self.parent_nodeid = parent_nodeid
+        self.sample_num = sample_num
+        self.is_left_node = is_left_node
+
+    def set_histogram(self, hist: HistogramBag):
+        self.stored_histogram = hist
 
     def __str__(self):
         return "fid:{},bid:{},weight:{},sum_grad:{},sum_hess:{},left_node:{},right_node:{}".format(
-                self.fid,self.bid,self.weight,self.sum_grad,self.sum_hess,self.left_nodeid,self.right_nodeid
+                self.fid, self.bid, self.weight, self.sum_grad, self.sum_hess, self.left_nodeid, self.right_nodeid
         )
 
 
 class SplitInfo(object):
     def __init__(self, sitename=consts.GUEST, best_fid=None, best_bid=None,
-                 sum_grad=0, sum_hess=0, gain=None, missing_dir=1):
+                 sum_grad=0, sum_hess=0, gain=None, missing_dir=1, left_sample_count=0):
         self.sitename = sitename
         self.best_fid = best_fid
         self.best_bid = best_bid
@@ -63,5 +71,5 @@ class SplitInfo(object):
         self.missing_dir = missing_dir
 
     def __str__(self):
-        return 'best_fid:{},best_bid{},sum_grad{},sum_hess{},gain{}'.format(self.best_fid,self.best_bid,
-                                                                            self.sum_grad,self.sum_hess,self.gain)
+        return 'best_fid:{},best_bid{},sum_grad{},sum_hess{},gain{}'.format(self.best_fid, self.best_bid,
+                                                                            self.sum_grad, self.sum_hess, self.gain)

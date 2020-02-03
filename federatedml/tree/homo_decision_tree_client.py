@@ -34,14 +34,15 @@ LOGGER = log_utils.getLogger()
 
 class HomoDecisionTreeClient(DecisionTree):
 
-    def __init__(self, tree_param: DecisionTreeParam, binned_data: DTable, bin_split_points: np.array, bin_sparse_point,
-                 g_h: DTable, valid_feature: dict, epoch_idx: int, role: str, tree_idx: int, flow_id: int):
+    def __init__(self, tree_param: DecisionTreeParam, data_bin: DTable = None, bin_split_points: np.array = None,
+                 bin_sparse_point=None, g_h: DTable = None, valid_feature: dict = None, epoch_idx: int = None,
+                 role: str = None, tree_idx: int = None, flow_id: int = None, mode='train'):
 
         """
         Parameters
         ----------
         tree_param: decision tree parameter object
-        binned_data binned: data instance
+        data_bin binned: data instance
         bin_split_points: data split points
         bin_sparse_point: sparse data point
         g_h computed: g val and h val of instances
@@ -49,12 +50,13 @@ class HomoDecisionTreeClient(DecisionTree):
         epoch_idx: current epoch index
         role: host or guest
         flow_id: flow id
+        mode: train / predict
         """
 
         super(HomoDecisionTreeClient, self).__init__(tree_param)
         self.splitter = Splitter(self.criterion_method, self.criterion_params, self.min_impurity_split,
                                  self.min_sample_split, self.min_leaf_node)
-        self.binned_data = binned_data
+        self.data_bin = data_bin
         self.g_h = g_h
         self.bin_split_points = bin_split_points
         self.bin_sparse_points = bin_sparse_point
@@ -82,10 +84,12 @@ class HomoDecisionTreeClient(DecisionTree):
         self.sample_weights = None
 
         # secure aggregator, class SecureBoostClientAggregator
-        assert role == consts.HOST or role == consts.GUEST
-        self.role = role
-        self.set_flowid(flow_id)
-        self.aggregator = SecureBoostClientAggregator(role=self.role, transfer_variable=self.transfer_inst)
+        if mode == 'train':
+            self.role = role
+            self.set_flowid(flow_id)
+            self.aggregator = SecureBoostClientAggregator(role=self.role, transfer_variable=self.transfer_inst)
+        elif mode == 'predict':
+            self.role, self.aggregator = None, None
 
     def set_flowid(self, flowid=0):
         LOGGER.info("set flowid, flowid is {}".format(flowid))
@@ -120,26 +124,52 @@ class HomoDecisionTreeClient(DecisionTree):
         self.aggregator.send_histogram(acc_histogram,suffix=suffix)
         LOGGER.debug('local histogram sent at layer {}'.format(suffix[0]))
 
+    def get_node_map(self, nodes: List[Node]):
+        node_map = {}
+        for idx, node in enumerate(nodes):
+            if node.id == 0 or node.is_left_node:
+                node_map[node.id] = idx
+        return node_map
 
-    def get_local_histogram(self, node_map, g_h, table_with_assign, split_points, sparse_point,
-                            valid_feature):
+    def get_local_histogram(self, cur_nodes: List[Node], tree: List[Node], node_map, g_h, table_with_assign,
+                            split_points, sparse_point, valid_feature):
         LOGGER.info("start to get node histograms")
         histograms = FeatureHistogram.calculate_histogram(
             table_with_assign, g_h,
             split_points, sparse_point,
             valid_feature, node_map,
             self.use_missing, self.zero_as_missing)
-
+        LOGGER.info("begin to accumulate histograms")
         acc_histograms = FeatureHistogram.accumulate_histogram(histograms)
-        return acc_histograms
 
-    def update_tree(self, cur_to_split: List[Node], split_info: List[SplitInfo]):
+        # histogram subtraction
+        full_acc_histograms = []
+        for idx, hist_bag in enumerate(acc_histograms):
+
+            node = cur_nodes[idx]
+
+            if node.id == 0:
+                full_acc_histograms.append(hist_bag)
+                break
+
+            parent_node = tree[node.parent_nodeid]
+            sibling_hist = parent_node.stored_histogram - hist_bag
+            if node.is_left_node:
+                full_acc_histograms.append(hist_bag)
+                full_acc_histograms.append(sibling_hist)
+            else:
+                full_acc_histograms.append(sibling_hist)
+                full_acc_histograms.append(hist_bag)
+
+        return full_acc_histograms
+
+    def update_tree(self, cur_to_split: List[Node], split_info: List[SplitInfo], histograms: List[HistogramBag]):
         """
         update current tree structure
         ----------
         split_info
         """
-        LOGGER.debug('updating tree_node, cur layer has {} node,'.format(len(cur_to_split)))
+        LOGGER.debug('updating tree_node, cur layer has {} node'.format(len(cur_to_split)))
         next_layer_node = []
         assert len(cur_to_split) == len(split_info)
         for idx in range(len(cur_to_split)):
@@ -152,24 +182,33 @@ class HomoDecisionTreeClient(DecisionTree):
 
             cur_to_split[idx].fid = split_info[idx].best_fid
             cur_to_split[idx].bid = split_info[idx].best_bid
+            cur_to_split[idx].missing_dir = split_info[idx].missing_dir
+            cur_to_split[idx].stored_histogram = histograms[idx]
 
-            l_id,r_id = self.tree_node_num + 1,self.tree_node_num + 2
-            cur_to_split[idx].left_nodeid,cur_to_split[idx].right_nodeid = l_id,r_id
+            p_id = self.tree_node_num
+            l_id, r_id = self.tree_node_num + 1, self.tree_node_num + 2
+            cur_to_split[idx].left_nodeid, cur_to_split[idx].right_nodeid = l_id, r_id
             self.tree_node_num += 2
 
-            l_g,l_h = split_info[idx].sum_grad,split_info[idx].sum_hess
+            l_g, l_h = split_info[idx].sum_grad, split_info[idx].sum_hess
 
             # create new left node and new right node
             left_node = Node(id=l_id,
                              sitename=self.sitename,
                              sum_grad=l_g,
                              sum_hess=l_h,
-                             weight=self.splitter.node_weight(l_g, l_h))
+                             weight=self.splitter.node_weight(l_g, l_h),
+                             parent_nodeid=p_id,
+                             sibling_nodeid=r_id,
+                             is_left_node=True)
             right_node = Node(id=r_id,
                               sitename=self.sitename,
                               sum_grad=sum_grad - l_g,
                               sum_hess=sum_hess - l_h,
-                              weight=self.splitter.node_weight(sum_grad - l_g,sum_hess - l_h))
+                              weight=self.splitter.node_weight(sum_grad - l_g, sum_hess - l_h),
+                              parent_nodeid=p_id,
+                              sibling_nodeid=l_id,
+                              is_left_node=False)
 
             next_layer_node.append(left_node)
             print('append left,cur tree has {} node'.format(len(self.tree_node)))
@@ -187,8 +226,8 @@ class HomoDecisionTreeClient(DecisionTree):
             if not node.is_leaf:
                 node.bid = self.bin_split_points[node.fid][node.bid]
 
-    def assign_instance_to_root_node(self, binned_data: DTable, root_node_id):
-        return binned_data.mapValues(lambda inst: (1, root_node_id))
+    def assign_instance_to_root_node(self, data_bin: DTable, root_node_id):
+        return data_bin.mapValues(lambda inst: (1, root_node_id))
 
     def assign_a_instance(self, row, tree: List[Node], bin_sparse_point, use_missing, use_zero_as_missing):
 
@@ -249,11 +288,11 @@ class HomoDecisionTreeClient(DecisionTree):
         pass
 
     def sync_cur_layer_node_num(self,node_num, suffix):
-        self.transfer_inst.cur_layer_node_num.remote(node_num,role=consts.ARBITER,idx=-1,suffix=suffix)
+        self.transfer_inst.cur_layer_node_num.remote(node_num, role=consts.ARBITER, idx=-1, suffix=suffix)
 
     def sync_best_splits(self, suffix) -> List[SplitInfo]:
 
-        best_splits = self.transfer_inst.best_split_points.get(idx=0,suffix=suffix)
+        best_splits = self.transfer_inst.best_split_points.get(idx=0, suffix=suffix)
         return best_splits
 
     def fit(self):
@@ -268,9 +307,9 @@ class HomoDecisionTreeClient(DecisionTree):
         LOGGER.debug('g_sum is {},h_sum is {}'.format(g_sum,h_sum))
 
         # get aggregated root info
-        self.aggregator.send_local_root_node_info(g_sum,h_sum,suffix=('root_node_sync1',self.epoch_idx))
-        g_h_dict = self.aggregator.get_aggregated_root_info(suffix=('root_node_sync2',self.epoch_idx))
-        global_g_sum,global_h_sum = g_h_dict['g_sum'],g_h_dict['h_sum']
+        self.aggregator.send_local_root_node_info(g_sum, h_sum,suffix=('root_node_sync1', self.epoch_idx))
+        g_h_dict = self.aggregator.get_aggregated_root_info(suffix=('root_node_sync2', self.epoch_idx))
+        global_g_sum, global_h_sum = g_h_dict['g_sum'], g_h_dict['h_sum']
 
         LOGGER.debug('global_g_sum is {},global_h_sum is {}'.format(global_g_sum, global_h_sum))
 
@@ -280,7 +319,7 @@ class HomoDecisionTreeClient(DecisionTree):
 
         self.cur_layer_node = [root_node]
         LOGGER.debug('assign samples to root node')
-        self.inst2node_idx = self.assign_instance_to_root_node(self.binned_data,0)
+        self.inst2node_idx = self.assign_instance_to_root_node(self.data_bin, 0)
 
         for dep in range(self.max_depth):
 
@@ -300,24 +339,33 @@ class HomoDecisionTreeClient(DecisionTree):
 
             LOGGER.debug('start to fit layer {}'.format(dep))
 
-            table_with_assignment = self.binned_data.join(self.inst2node_idx,
+            table_with_assignment = self.data_bin.join(self.inst2node_idx,
                                                           lambda inst, assignment: (inst, assignment))
 
             # send current layer node number:
             self.sync_cur_layer_node_num(len(self.cur_layer_node), suffix=(dep, self.epoch_idx, self.tree_idx))
 
-            split_info = []
-            for batch_id,i in enumerate(range(0, len(self.cur_layer_node), self.max_split_nodes)):
+            split_info, agg_histograms = [], []
+            for batch_id, i in enumerate(range(0, len(self.cur_layer_node), self.max_split_nodes)):
                 cur_to_split = self.cur_layer_node[i:i+self.max_split_nodes]
 
-                node_map = {node.id:idx for idx,node in enumerate(cur_to_split)}
-                LOGGER.debug('computing histogram for batch{} at depth{}'.format(batch_id,dep))
-                acc_histogram = self.get_local_histogram(node_map,self.g_h,table_with_assignment,self.bin_split_points,
-                                                         self.bin_sparse_points,self.valid_features)
+                node_map = self.get_node_map(nodes=cur_to_split)
+                LOGGER.debug('computing histogram for batch{} at depth{}'.format(batch_id, dep))
+                local_histogram = self.get_local_histogram(
+                    cur_nodes=cur_to_split,
+                    tree=self.tree_node,
+                    node_map=node_map,
+                    g_h=self.g_h,
+                    table_with_assign=table_with_assignment,
+                    split_points=self.bin_split_points,
+                    sparse_point=self.bin_sparse_points,
+                    valid_feature=self.valid_features
+                )
 
-                LOGGER.debug('federated finding best splits for batch{} at layer {}'.format(batch_id,dep))
-                self.sync_local_node_histogram(acc_histogram, suffix=(batch_id, dep, self.epoch_idx, self.tree_idx))
+                LOGGER.debug('federated finding best splits for batch{} at layer {}'.format(batch_id, dep))
+                self.sync_local_node_histogram(local_histogram, suffix=(batch_id, dep, self.epoch_idx, self.tree_idx))
 
+                agg_histograms += local_histogram
 
                 # # only for local testing
                 # for bag in acc_histogram:
@@ -325,14 +373,17 @@ class HomoDecisionTreeClient(DecisionTree):
                 # split_info += self.splitter.find_split(acc_histogram,use_missing=self.use_missing,zero_as_missing=
                 #                                        self.zero_as_missing,valid_features=self.valid_features)
 
-            split_info2 = self.sync_best_splits(suffix=(dep,self.epoch_idx))
+            split_info = self.sync_best_splits(suffix=(dep, self.epoch_idx))
+
+
             LOGGER.debug('got best splits from arbiter')
 
-            new_layer_node = self.update_tree(self.cur_layer_node,split_info2)
+            new_layer_node = self.update_tree(self.cur_layer_node, split_info, histograms= \
+                agg_histograms)
             self.cur_layer_node = new_layer_node
             self.update_feature_importance(split_info)
 
-            self.inst2node_idx,leaf_val = self.assign_instance_to_new_node(table_with_assignment, self.tree_node)
+            self.inst2node_idx, leaf_val = self.assign_instance_to_new_node(table_with_assignment, self.tree_node)
 
             # record leaf val
             if self.sample_weights is None:
@@ -353,7 +404,7 @@ class HomoDecisionTreeClient(DecisionTree):
 
     def traverse_tree(self, data_inst: Instance, tree: List[Node], use_missing=True, zero_as_missing=True):
 
-        nid = 0# root node id
+        nid = 0 # root node id
         while True:
 
             if tree[nid].is_leaf:
@@ -413,8 +464,67 @@ class HomoDecisionTreeClient(DecisionTree):
         for bag in hist_list:
             LOGGER.debug(bag)
 
-    def set_model_meta(self):
-        pass
+    def get_model_meta(self):
+        model_meta = DecisionTreeModelMeta()
+        model_meta.criterion_meta.CopyFrom(CriterionMeta(criterion_method=self.criterion_method,
+                                                         criterion_param=self.criterion_params))
 
-    def set_model_param(self):
-        pass
+        model_meta.max_depth = self.max_depth
+        model_meta.min_sample_split = self.min_sample_split
+        model_meta.min_impurity_split = self.min_impurity_split
+        model_meta.min_leaf_node = self.min_leaf_node
+        model_meta.use_missing = self.use_missing
+        model_meta.zero_as_missing = self.zero_as_missing
+
+        return model_meta
+
+    def set_model_meta(self, model_meta):
+        self.max_depth = model_meta.max_depth
+        self.min_sample_split = model_meta.min_sample_split
+        self.min_impurity_split = model_meta.min_impurity_split
+        self.min_leaf_node = model_meta.min_leaf_node
+        self.criterion_method = model_meta.criterion_meta.criterion_method
+        self.criterion_params = list(model_meta.criterion_meta.criterion_param)
+        self.use_missing = model_meta.use_missing
+        self.zero_as_missing = model_meta.zero_as_missing
+
+    def get_model_param(self):
+        model_param = DecisionTreeModelParam()
+        for node in self.tree_node:
+            model_param.tree_.add(id=node.id,
+                                  sitename=self.role,
+                                  fid=node.fid,
+                                  bid=node.bid,
+                                  weight=node.weight,
+                                  is_leaf=node.is_leaf,
+                                  left_nodeid=node.left_nodeid,
+                                  right_nodeid=node.right_nodeid,
+                                  missing_dir=node.missing_dir)
+
+        LOGGER.debug('output tree: epoch_idx:{} tree_idx:{}'.format(self.epoch_idx, self.tree_idx))
+        return model_param
+
+    def set_model_param(self, model_param):
+        self.tree_node = []
+        for node_param in model_param.tree_:
+            _node = Node(id=node_param.id,
+                         sitename=node_param.sitename,
+                         fid=node_param.fid,
+                         bid=node_param.bid,
+                         weight=node_param.weight,
+                         is_leaf=node_param.is_leaf,
+                         left_nodeid=node_param.left_nodeid,
+                         right_nodeid=node_param.right_nodeid,
+                         missing_dir=node_param.missing_dir)
+
+            self.tree_node.append(_node)
+
+    def get_model(self):
+        model_meta = self.get_model_meta()
+        model_param = self.get_model_param()
+        return model_meta, model_param
+
+    def load_model(self, model_meta=None, model_param=None):
+        LOGGER.info("load tree model")
+        self.set_model_meta(model_meta)
+        self.set_model_param(model_param)

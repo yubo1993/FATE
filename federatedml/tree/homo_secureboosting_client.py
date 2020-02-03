@@ -1,7 +1,17 @@
 from federatedml.feature.binning.quantile_binning import QuantileBinning
 from federatedml.feature.fate_element_type import NoneType
 from federatedml.param.feature_binning_param import FeatureBinningParam
+
+from operator import itemgetter
+
 from federatedml.tree import BoostingTree
+from federatedml.param.evaluation_param import EvaluateParam
+from federatedml.param.feature_binning_param import FeatureBinningParam
+from federatedml.protobuf.generated.boosting_tree_model_meta_pb2 import BoostingTreeModelMeta
+from federatedml.protobuf.generated.boosting_tree_model_meta_pb2 import ObjectiveMeta
+from federatedml.protobuf.generated.boosting_tree_model_meta_pb2 import QuantileMeta
+from federatedml.protobuf.generated.boosting_tree_model_param_pb2 import BoostingTreeModelParam
+from federatedml.protobuf.generated.boosting_tree_model_param_pb2 import FeatureImportanceInfo
 from federatedml.transfer_variable.transfer_class.homo_secure_boost_transfer_variable import \
     HomoSecureBoostingTreeTransferVariable
 from federatedml.util import consts
@@ -95,9 +105,16 @@ class HomoSecureBoostingTreeClient(BoostingTree):
         self.feature_importance = {}
         self.transfer_inst = HomoSecureBoostingTreeTransferVariable()
         self.role = None
-        self.binned_data = None
+        self.data_bin = None
         self.bin_split_points = None
         self.bin_sparse_points = None
+        self.init_score = None
+        self.local_loss_history = []
+        self.classes_ = []
+
+        # store learnt model param
+        self.tree_meta = None
+        self.learnt_tree_param = []
 
     def set_loss_function(self, objective_param):
         loss_type = objective_param.objective
@@ -246,15 +263,14 @@ class HomoSecureBoostingTreeClient(BoostingTree):
         LOGGER.info("generate flowid, flowid {}".format(self.flowid))
         return ".".join(map(str, [self.flowid, round_num, tree_num]))
 
-    def label_alignment(self, labels: List[int], suffix):
+    def label_alignment(self, labels: List[int]):
         self.transfer_inst.local_labels.remote(labels, suffix=('label_align', ))
 
-
-    def fit(self,  data_inst:DTable, validate_data=None,):
+    def fit(self, data_inst:DTable, validate_data=None,):
 
         # binning
         # data_inst = self.data_alignment(data_inst)
-        self.binned_data, self.bin_split_points, self.bin_sparse_points = self.federated_binning(data_inst)
+        self.data_bin, self.bin_split_points, self.bin_sparse_points = self.federated_binning(data_inst)
 
         # set feature_num
         self.feature_num = self.bin_split_points.shape[0]
@@ -263,15 +279,24 @@ class HomoSecureBoostingTreeClient(BoostingTree):
         self.sync_feature_num()
 
         # check labels
-        local_classes = self.check_labels(self.binned_data)
+        # TODO throws error when one sample only
+        local_classes = self.check_labels(self.data_bin)
+
+        # FIXME For testing, only keey one sample for host
+        if self.role == consts.HOST:
+            self.data_bin = self.data_bin.filter(lambda k, v: k == '0')
+
         if self.task_type == consts.CLASSIFICATION:
             self.transfer_inst.local_labels.remote(local_classes, role=consts.ARBITER, suffix=('label_align', ))
             new_label_mapping = self.transfer_inst.label_mapping.get(idx=0, suffix=('label_mapping', ))
+            self.classes_ = [new_label_mapping[k] for k in new_label_mapping]
             # set labels
             self.num_classes = len(new_label_mapping)
-            self.y = self.binned_data.mapValues(lambda instance: new_label_mapping[instance.label])
+            self.y = self.data_bin.mapValues(lambda instance: new_label_mapping[instance.label])
             # set tree dimension
             self.tree_dim = self.num_classes if self.num_classes > 2 else 1
+        else:
+            self.y = self.data_bin.mapValues(lambda instance: instance.label)
 
         # set loss function
         self.set_loss_function(self.objective_param)
@@ -287,20 +312,23 @@ class HomoSecureBoostingTreeClient(BoostingTree):
             for t_idx in range(self.tree_dim):
                 subtree_g_h = self.get_subtree_grad_and_hess(g_h, t_idx)
                 flow_id = self.generate_flowid(epoch_idx, t_idx)
-                new_tree = HomoDecisionTreeClient(self.tree_param, self.binned_data, self.bin_split_points,
+                new_tree = HomoDecisionTreeClient(self.tree_param, self.data_bin, self.bin_split_points,
                                                   self.bin_sparse_points, subtree_g_h, valid_feature=valid_features
                                                   , epoch_idx=epoch_idx, role=self.role, flow_id=flow_id, tree_idx=\
-                                                  t_idx)
+                                                  t_idx, mode='train')
                 new_tree.fit()
 
                 # update y_hat_val
                 self.update_y_hat_val(new_val=new_tree.sample_weights, mode='train', tree_idx=t_idx)
                 self.trees.append(new_tree)
+                self.tree_meta, new_tree_param = new_tree.get_model()
+                self.learnt_tree_param.append(new_tree_param)
                 self.update_feature_importance(new_tree.get_feature_importance())
 
             # sync loss status
             loss = self.compute_local_loss(self.y, self.y_hat)
-            self.sync_local_loss(loss, self.binned_data.count(), suffix=(epoch_idx, ))
+            self.local_loss_history.append(loss)
+            self.sync_local_loss(loss, self.data_bin.count(), suffix=(epoch_idx,))
 
             # check stop flag if n_iter_no_change is True
             if self.n_iter_no_change:
@@ -312,33 +340,148 @@ class HomoSecureBoostingTreeClient(BoostingTree):
 
             LOGGER.debug('fitting one tree done, cur local loss is {}'.format(loss))
 
-    def predict(self,  data_inst:DTable):
+    def predict(self,  data_inst: DTable):
 
         to_predict_data = self.data_alignment(data_inst)
 
         self.y_hat_predict, _ = self.initialize_y_hat()
 
-        for tree in self.trees:
-            predict_val = tree.predict(to_predict_data)
-            self.update_y_hat_val(new_val=predict_val, mode='predict')
+        round_num = len(self.learnt_tree_param) // self.tree_dim
+        idx = 0
+        for round_idx in range(round_num):
+            for tree_idx in range(self.tree_dim):
+                tree_inst = HomoDecisionTreeClient(tree_param=self.tree_param, mode='predict')
+                tree_inst.load_model(model_meta=self.tree_meta, model_param=self.learnt_tree_param[idx])
+                idx += 1
+                predict_val = tree_inst.predict(to_predict_data)
+                self.update_y_hat_val(predict_val, mode='predict', tree_idx=tree_idx)
+
+        LOGGER.debug('got predicted scores')
+
+        LOGGER.debug(list(self.y_hat_predict.collect()))
 
         predict_result = None
+
         if self.task_type == consts.REGRESSION and \
                 self.objective_param.objective in ["lse",  "lae",  "huber",  "log_cosh",  "fair",  "tweedie"]:
             predict_result = data_inst.join(self.y_hat_predict,\
-                                    lambda inst,  pred: [inst.label,  float(pred),  float(pred),  {"label": float(pred)}])
+                                lambda inst,  pred: [inst.label,  float(pred),  float(pred),  {"label": float(pred)}])
 
         elif self.task_type == consts.CLASSIFICATION:
+            classes_ = self.classes_
+            # TODO why error here if use loss_func directly ?
+            loss_func = self.loss_fn
             if self.num_classes == 2:
-                classes_ = [0, 1]
+                predicts = self.y_hat_predict.mapValues(lambda f: float(loss_func.predict(f)))
                 threshold = self.predict_param.threshold
-                predict_result = data_inst.join(self.y_hat_predict,  lambda inst,  pred: [inst.label, 
+                predict_result = data_inst.join(predicts, lambda inst, pred: [inst.label,
                                                                               classes_[1] if pred > threshold else
-                                                                              classes_[0],  pred, 
+                                                                              classes_[0],  pred,
                                                                               {"0": 1 - pred,  "1": pred}])
             else:
-                # TODO multiclass
-                pass
+                predicts = self.y_hat_predict.mapValues(lambda f: loss_func.predict(f).tolist())
+                predict_result = data_inst.join(predicts, lambda inst, preds: [inst.label,\
+                                    classes_[np.argmax(preds)], np.max(preds), dict(zip(map(str, classes_), preds))])
 
         return predict_result
+
+    def get_feature_importance(self):
+        return self.feature_importance
+
+    def get_model_meta(self):
+        model_meta = BoostingTreeModelMeta()
+        model_meta.tree_meta.CopyFrom(self.tree_meta)
+        model_meta.learning_rate = self.learning_rate
+        model_meta.num_trees = self.num_trees
+        model_meta.quantile_meta.CopyFrom(QuantileMeta(bin_num=self.bin_num))
+        model_meta.objective_meta.CopyFrom(ObjectiveMeta(objective=self.objective_param.objective,
+                                                         param=self.objective_param.params))
+        model_meta.task_type = self.task_type
+        model_meta.n_iter_no_change = self.n_iter_no_change
+        model_meta.tol = self.tol
+
+        meta_name = "HomoSecureBoostingTreeGuestMeta"
+
+        return meta_name, model_meta
+
+    def set_model_meta(self, model_meta):
+
+        self.tree_meta = model_meta.tree_meta
+        self.learning_rate = model_meta.learning_rate
+        self.num_trees = model_meta.num_trees
+        self.bin_num = model_meta.quantile_meta.bin_num
+        self.objective_param.objective = model_meta.objective_meta.objective
+        self.objective_param.params = list(model_meta.objective_meta.param)
+        self.task_type = model_meta.task_type
+        self.n_iter_no_change = model_meta.n_iter_no_change
+        self.tol = model_meta.tol
+
+    def get_model_param(self):
+        model_param = BoostingTreeModelParam()
+        model_param.tree_num = len(list(self.learnt_tree_param))
+        model_param.tree_dim = self.tree_dim
+        model_param.trees_.extend(self.learnt_tree_param)
+        model_param.init_score.extend(self.init_score)
+        model_param.losses.extend(self.local_loss_history)
+        model_param.classes_.extend(map(str, self.classes_))
+        model_param.num_classes = self.num_classes
+
+        feature_importance = list(self.get_feature_importance().items())
+        feature_importance = sorted(feature_importance, key=itemgetter(1), reverse=True)
+        feature_importance_param = []
+        for fid, _importance in feature_importance:
+            feature_importance_param.append(FeatureImportanceInfo(sitename=self.role,
+                                                                  fid=fid,
+                                                                  importance=_importance))
+        model_param.feature_importances.extend(feature_importance_param)
+
+        model_param.feature_name_fid_mapping.update(self.feature_name_fid_mapping)
+
+        param_name = "HomoSecureBoostingTreeGuestParam"
+
+        return param_name, model_param
+
+    def get_cur_model(self):
+        meta_name, meta_protobuf = self.get_model_meta()
+        param_name, param_protobuf = self.get_model_param()
+        return {meta_name: meta_protobuf,
+                param_name: param_protobuf
+                }
+
+    def set_model_param(self, model_param):
+        self.learnt_tree_param = list(model_param.trees_)
+        self.init_score = np.array(list(model_param.init_score))
+        self.local_loss_history = list(model_param.losses)
+        self.classes_ = list(model_param.classes_)
+        self.tree_dim = model_param.tree_dim
+        self.num_classes = model_param.num_classes
+        self.feature_name_fid_mapping.update(model_param.feature_name_fid_mapping)
+
+    def get_metrics_param(self):
+        if self.task_type == consts.CLASSIFICATION:
+            if self.num_classes == 2:
+                return EvaluateParam(eval_type="binary",
+                                     pos_label=self.classes_[1])
+            else:
+                return EvaluateParam(eval_type="multi")
+        else:
+            return EvaluateParam(eval_type="regression")
+
+    def export_model(self):
+        return self.get_cur_model()
+
+    def load_model(self, model_dict):
+        model_param = None
+        model_meta = None
+        for _, value in model_dict["model"].items():
+            for model in value:
+                if model.endswith("Meta"):
+                    model_meta = value[model]
+                if model.endswith("Param"):
+                    model_param = value[model]
+        LOGGER.info("load model")
+
+        self.set_model_meta(model_meta)
+        self.set_model_param(model_param)
+        self.set_loss_function(self.objective_param)
 

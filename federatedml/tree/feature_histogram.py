@@ -29,7 +29,7 @@ import copy
 from arch.api.utils import log_utils
 from federatedml.feature.fate_element_type import NoneType
 from operator import add,sub
-from federatedml.framework.weights import ListWeights,Weights
+from federatedml.framework.weights import ListWeights, Weights
 import numpy as np
 from typing import List
 
@@ -41,7 +41,8 @@ class HistogramBag(object):
     holds histograms
     """
 
-    def __init__(self, component_num:int = 0, bin_num: list = None, valid_dict: dict = None,):
+    def __init__(self, component_num: int = 0, bin_num: list = None, valid_dict: dict = None, h_id: int = -1,\
+            p_hid: int = -1):
 
         """
         Parameters
@@ -58,7 +59,8 @@ class HistogramBag(object):
 
         self.bin_num = bin_num
         self.component_num = component_num
-
+        self.h_id = h_id
+        self.p_hid = p_hid
         self.bag = []
         component_num = component_num
         assert component_num == len(bin_num)
@@ -67,7 +69,7 @@ class HistogramBag(object):
                 self.bag.append([])
             else:
                 # self.bag.append(np.zeros((bin_num[fid],3)))
-                self.bag.append([[0,0,0] for i in range(bin_num[cid])])
+                self.bag.append([[0, 0, 0] for i in range(bin_num[cid])])
 
     def binary_op(self, other, func, inplace=False):
         assert isinstance(other, HistogramBag)
@@ -81,16 +83,16 @@ class HistogramBag(object):
 
         for bag_idx in range(len(self.bag)):
             for hist_idx in range(len(self.bag[bag_idx])):
-                bag[bag_idx][hist_idx][0] = func(self.bag[bag_idx][hist_idx][0],other[bag_idx][hist_idx][0])
-                bag[bag_idx][hist_idx][1] = func(self.bag[bag_idx][hist_idx][1],other[bag_idx][hist_idx][1])
-                bag[bag_idx][hist_idx][2] = func(self.bag[bag_idx][hist_idx][2],other[bag_idx][hist_idx][2])
+                bag[bag_idx][hist_idx][0] = func(self.bag[bag_idx][hist_idx][0], other[bag_idx][hist_idx][0])
+                bag[bag_idx][hist_idx][1] = func(self.bag[bag_idx][hist_idx][1], other[bag_idx][hist_idx][1])
+                bag[bag_idx][hist_idx][2] = func(self.bag[bag_idx][hist_idx][2], other[bag_idx][hist_idx][2])
 
         return self if inplace else newbag
 
-    def sub_inplace(self,other):
+    def sub_inplace(self, other):
         self.binary_op(other, sub, inplace=True)
 
-    def add_inplace(self,other):
+    def add_inplace(self, other):
         self.binary_op(other, add, inplace=True)
 
     def aggregate_from_left(self):
@@ -98,6 +100,12 @@ class HistogramBag(object):
             for k in range(1, len(self.bag[j])):
                 for r in range(len(self.bag[j][k])):
                     self.bag[j][k][r] += self.bag[j][k - 1][r]
+
+    def __add__(self, other):
+        return self.binary_op(other, add, inplace=False)
+
+    def __sub__(self, other):
+        return self.binary_op(other, sub, inplace=False)
 
     def __len__(self):
         return len(self.bag)
@@ -110,7 +118,7 @@ class HistogramBag(object):
 
 class FeatureHistogramWeights(Weights):
 
-    def __init__(self,list_of_histogrambags:List[HistogramBag]):
+    def __init__(self, list_of_histogrambags:List[HistogramBag]):
 
         self.hists = list_of_histogrambags
         super(FeatureHistogramWeights,self).__init__(l=list_of_histogrambags)
@@ -149,7 +157,7 @@ class FeatureHistogramWeights(Weights):
         else:
             return FeatureHistogramWeights(new_weights)
 
-    def axpy(self, a, y:'FeatureHistogramWeights'):
+    def axpy(self, a, y: 'FeatureHistogramWeights'):
 
         func = lambda x1,x2:x1 + a*x2
         self.binary_op(y,func,inplace=True)

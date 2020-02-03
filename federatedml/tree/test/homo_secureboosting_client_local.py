@@ -245,7 +245,7 @@ class HomoSecureBoostingTreeClient(BoostingTree):
         # check labels
         self.num_classes, new_label_mapping = self.check_labels(self.binned_data)
         # set tree dimension
-        self.tree_dim = self.num_classes
+        self.tree_dim = self.num_classes if self.num_classes > 2 else 1
         # set labels
         self.y = self.binned_data.mapValues(lambda instance: new_label_mapping[instance.label])
         # set loss function
@@ -282,17 +282,17 @@ class HomoSecureBoostingTreeClient(BoostingTree):
 
         for tree in self.trees:
             predict_val = tree.predict(to_predict_data)
-            self.update_y_hat_val(new_val=predict_val,mode='predict')
+            self.update_y_hat_val(new_val=predict_val, mode='predict')
 
         predict_result = None
         if self.task_type == consts.REGRESSION and \
                 self.objective_param.objective in ["lse", "lae", "huber", "log_cosh", "fair", "tweedie"]:
-            predict_result = data_inst.join(self.y_hat_predict,\
+            predict_result = data_inst.join(self.y_hat_predict, \
                                     lambda inst, pred: [inst.label, float(pred), float(pred), {"label": float(pred)}])
 
         elif self.task_type == consts.CLASSIFICATION:
             if self.num_classes == 2:
-                classes_ = [0,1]
+                classes_ = [0, 1]
                 threshold = self.predict_param.threshold
                 predict_result = data_inst.join(self.y_hat_predict, lambda inst, pred: [inst.label,
                                                                               classes_[1] if pred > threshold else

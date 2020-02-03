@@ -57,12 +57,15 @@ class HomoDecisionTreeArbiter(DecisionTree):
         self.set_flowid(flow_id)
         self.aggregator = SecureBoostArbiterAggregator(transfer_variable=self.transfer_inst)
 
+        # stored histogram for faster computation {node_id:histogram_bag}
+        self.stored_histograms = {}
+
     def set_flowid(self, flowid=0):
         LOGGER.info("set flowid, flowid is {}".format(flowid))
         self.transfer_inst.set_flowid(flowid)
 
     def sync_node_sample_numbers(self, suffix):
-        cur_layer_node_num = self.transfer_inst.cur_layer_node_num.get(-1,suffix=suffix)
+        cur_layer_node_num = self.transfer_inst.cur_layer_node_num.get(-1, suffix=suffix)
         for num in cur_layer_node_num[1:]:
             assert num == cur_layer_node_num[0]
         return cur_layer_node_num[0]
@@ -91,9 +94,9 @@ class HomoDecisionTreeArbiter(DecisionTree):
 
         LOGGER.info('begin to fit homo decision tree, epoch {}, tree idx {}'.format(self.epoch_idx, self.tree_idx))
 
-        g_sum, h_sum = self.aggregator.aggregate_root_node_info(suffix=('root_node_sync1',self.epoch_idx))
-        LOGGER.debug('g_sum is {},h_sum is {}'.format(g_sum,h_sum))
-        self.aggregator.broadcast_root_info(g_sum,h_sum,suffix=('root_node_sync2',self.epoch_idx))
+        g_sum, h_sum = self.aggregator.aggregate_root_node_info(suffix=('root_node_sync1', self.epoch_idx))
+        LOGGER.debug('g_sum is {},h_sum is {}'.format(g_sum, h_sum))
+        self.aggregator.broadcast_root_info(g_sum, h_sum, suffix=('root_node_sync2', self.epoch_idx))
 
         for dep in range(self.max_depth):
 
@@ -108,7 +111,7 @@ class HomoDecisionTreeArbiter(DecisionTree):
             LOGGER.debug('we have {} nodes to split at this layer'.format(cur_layer_node_num))
             for batch_id,i in enumerate(range(0, cur_layer_node_num, self.max_split_nodes)):
                 node_local_histogram = self.sync_local_histogram(suffix=(batch_id, dep, self.epoch_idx, self.tree_idx))
-                best_splits = self.federated_find_best_split(node_local_histogram,parallel_partitions=10)
+                best_splits = self.federated_find_best_split(node_local_histogram, parallel_partitions=10)
                 split_info += best_splits
 
             LOGGER.debug('best_splits found')
