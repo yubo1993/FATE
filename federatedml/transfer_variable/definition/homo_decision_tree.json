@@ -1,11 +1,5 @@
 {
    "HomoDecisionTreeTransferVariable": {
-     "local_histogram": {
-       "src": ["guest","host"],
-       "dst": [
-         "arbiter"
-       ]
-     },
      "best_split_points": {
        "src": "arbiter",
        "dst": [
@@ -16,12 +10,6 @@
        "src": ["guest","host"],
        "dst": [
          "arbiter"
-       ]
-     },
-     "can_split_nodes": {
-       "src": "arbiter",
-       "dst": [
-         "guest","host"
        ]
      },
      "cur_layer_node_num": {
