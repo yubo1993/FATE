@@ -206,7 +206,7 @@ class HomoSecureBoostingTreeClient(BoostingTree):
             self.y_hat_predict = self.y_hat_predict.join(new_val,add_func)
 
     def sync_feature_num(self):
-        self.transfer_inst.feature_number.remote(self.feature_num,role=consts.ARBITER,idx=-1,suffix=(0,))
+        self.transfer_inst.feature_number.remote(self.feature_num,role=consts.ARBITER, idx=-1, suffix=(0,))
 
     def get_subtree_grad_and_hess(self, g_h: DTable, tree_idx: int):
         LOGGER.info("get grad and hess of tree {}".format(tree_idx))

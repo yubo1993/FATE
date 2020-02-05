@@ -1,25 +1,12 @@
-import functools
-import copy
-from arch.api import session
-from federatedml.protobuf.generated.boosting_tree_model_meta_pb2 import CriterionMeta
-from federatedml.protobuf.generated.boosting_tree_model_meta_pb2 import DecisionTreeModelMeta
-from federatedml.protobuf.generated.boosting_tree_model_param_pb2 import DecisionTreeModelParam
-from federatedml.transfer_variable.transfer_class.hetero_decision_tree_transfer_variable import \
-    HeteroDecisionTreeTransferVariable
-from federatedml.util import consts
-from federatedml.tree import FeatureHistogram
-from federatedml.tree import DecisionTree
-from federatedml.tree import Splitter
-from federatedml.tree import Node
-from federatedml.feature.fate_element_type import NoneType
-from federatedml.model_base import ModelBase
-from federatedml.transfer_variable.transfer_class.cwjtest_transfer_variable import CWJTestVariable
 from federatedml.param.cwjtestparam import CwjParam
-from federatedml.framework.homo.procedure import aggregator
-from federatedml.tree.feature_histogram import HistogramBag
 from arch.api.utils import log_utils
-from federatedml.framework.weights import NumericWeights
-from federatedml.framework.weights import ListWeights
+import numpy as np
+from federatedml.util import abnormal_detection
+from federatedml.util import consts
+from federatedml.feature.sparse_vector import SparseVector
+from federatedml.model_base import ModelBase
+from federatedml.feature.fate_element_type import NoneType
+
 
 
 LOGGER = log_utils.getLogger()
@@ -27,25 +14,66 @@ LOGGER = log_utils.getLogger()
 class CWJBase(ModelBase):
 
     def __init__(self):
-        super(CWJBase,self).__init__()
-        self.tranvar = CWJTestVariable()
+        super(CWJBase, self).__init__()
         self.model_param = CwjParam()
-        LOGGER.debug('initializing aggregator')
-        self.aggregator = None
-        self.hist = None
-        self.list_weights = None
+        self.binning_obj = None
+        LOGGER.debug('model')
 
 
     def _init_model(self,param):
         LOGGER.info('initialization done')
 
-    def fit(self,train=None,validate=None):
+    @staticmethod
+    def data_format_transform(row):
+        if type(row.features).__name__ != consts.SPARSE_VECTOR:
+            feature_shape = row.features.shape[0]
+            indices = []
+            data = []
+
+            for i in range(feature_shape):
+                if np.isnan(row.features[i]):
+                    indices.append(i)
+                    data.append(NoneType())
+                elif np.abs(row.features[i]) < consts.FLOAT_ZERO:
+                    continue
+                else:
+                    indices.append(i)
+                    data.append(row.features[i])
+
+            row.features = SparseVector(indices, data, feature_shape)
+        else:
+            sparse_vec = row.features.get_sparse_vector()
+            for key in sparse_vec:
+                if sparse_vec.get(key) == NoneType() or np.isnan(sparse_vec.get(key)):
+                    sparse_vec[key] = NoneType()
+
+            row.features.set_sparse_vector(sparse_vec)
+
+        return row
+
+    def data_alignment(self, data_inst):
+        abnormal_detection.empty_table_detection(data_inst)
+        abnormal_detection.empty_feature_detection(data_inst)
+
+        schema = data_inst.schema
+        new_data_inst = data_inst.mapValues(lambda row: CWJBase.data_format_transform(row))
+
+        new_data_inst.schema = schema
+
+        return new_data_inst
+
+    def fit(self, train=None, validate=None):
         LOGGER.debug('fit called')
-        self.aggregator.send_histogram([self.hist,self.hist],suffix=('cwj',))
-        LOGGER.info('data sent')
-        # data = self.sync_data_vara()
-        self.aggregator.send_local_root_node_info(114,514,1919,suffix=('cwj2',))
-        received = self.aggregator.get_aggregated_root_info(suffix=('cwj1',))
-        LOGGER.debug(received)
-        LOGGER.debug('data received')
+        data_inst = self.data_alignment(train)
+
+        a = list(data_inst.collect())
+        LOGGER.debug('showing labels')
+        for feat in a:
+            LOGGER.debug(feat[1].label)
+
+        if train is not None:
+            LOGGER.debug('showing inst_num:{}'.format(data_inst.count()))
+        binning_result = self.binning_obj.average_run(data_instances=data_inst, bin_num=20)
+        LOGGER.debug('binning result is {}'.format(binning_result))
+
 

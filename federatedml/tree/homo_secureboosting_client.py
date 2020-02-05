@@ -1,12 +1,8 @@
-from federatedml.feature.binning.quantile_binning import QuantileBinning
 from federatedml.feature.fate_element_type import NoneType
-from federatedml.param.feature_binning_param import FeatureBinningParam
-
 from operator import itemgetter
 
 from federatedml.tree import BoostingTree
 from federatedml.param.evaluation_param import EvaluateParam
-from federatedml.param.feature_binning_param import FeatureBinningParam
 from federatedml.protobuf.generated.boosting_tree_model_meta_pb2 import BoostingTreeModelMeta
 from federatedml.protobuf.generated.boosting_tree_model_meta_pb2 import ObjectiveMeta
 from federatedml.protobuf.generated.boosting_tree_model_meta_pb2 import QuantileMeta
@@ -26,6 +22,10 @@ from federatedml.loss import FairLoss
 from federatedml.tree.homo_decision_tree_client import HomoDecisionTreeClient
 from federatedml.feature.instance import Instance
 from federatedml.feature.sparse_vector import SparseVector
+from federatedml.feature.homo_feature_binning.homo_split_points import HomoSplitPointCalculator
+
+from fate_flow.entity.metric import Metric
+from fate_flow.entity.metric import MetricMeta
 
 import functools
 from numpy import random
@@ -54,6 +54,7 @@ class FakeBinning():
 
     def __init__(self, bin_num=32):
         self.bin_num = bin_num
+        self.split_points = None
 
     def helper(self, instance, split_points):
         feat = instance.features
@@ -65,26 +66,28 @@ class FakeBinning():
         return Instance(inst_id=instance.inst_id, features=SparseVector(indices=indices, data=sparse_feat)
                         , label=instance.label)
 
-    def fit(self, Dtable:DTable):
-        arr = []
-        for row in Dtable.collect():
-            arr.append(row[1].features)
+    def fit(self, Dtable:DTable, split_points):
 
-        arr = np.stack(arr)
-        split_points = []
-        width = arr.shape[1]
-        for num in range(width):
-            col_max = arr[:, num].max()
-            col_min = arr[:, num].min()
-            split_points.append(np.arange(col_min, col_max, (col_max-col_min)/self.bin_num))
+        if split_points is None:
+            arr = []
+            for row in Dtable.collect():
+                arr.append(row[1].features)
 
-        self.split_points = np.stack(split_points)
+            arr = np.stack(arr)
+            split_points = []
+            width = arr.shape[1]
+            for num in range(width):
+                col_max = arr[:, num].max()
+                col_min = arr[:, num].min()
+                split_points.append(np.arange(col_min, col_max, (col_max - col_min) / self.bin_num))
+
+            self.split_points = np.stack(split_points)
+        else:
+            self.split_points = split_points
 
         func = functools.partial(self.helper, split_points=self.split_points)
         new_table = Dtable.mapValues(func)
-        return new_table, self.split_points, {k: 0 for k in range(self.bin_num)}
-
-# LOGGER = LocalTestLogger()
+        return new_table, self.split_points, {k: 0 for k in range(self.split_points.shape[0])}
 
 class HomoSecureBoostingTreeClient(BoostingTree):
 
@@ -115,6 +118,11 @@ class HomoSecureBoostingTreeClient(BoostingTree):
         # store learnt model param
         self.tree_meta = None
         self.learnt_tree_param = []
+
+        self.aggregator = None
+
+        # federated binning_obj：HomoSplitPointCalculator
+        self.binning_obj = None
 
     def set_loss_function(self, objective_param):
         loss_type = objective_param.objective
@@ -148,11 +156,17 @@ class HomoSecureBoostingTreeClient(BoostingTree):
 
     def federated_binning(self,  data_instance) -> Tuple[DTable, np.array, dict]:
 
+        sparse_data = self.data_alignment(data_instance)
+        binning_result = self.binning_obj.average_run(data_instances=sparse_data,
+                                                      bin_num=self.bin_num)
+        ndarr_list = [binning_result[k] for k in binning_result]
+        arr = np.stack(ndarr_list)
+        LOGGER.debug('binning result is {}'.format(binning_result))
         # federated binning
         binning = FakeBinning(bin_num=10)
-        return binning.fit(data_instance)
+        return binning.fit(data_instance, split_points=arr)
 
-    def compute_local_grad_and_hess(self , y_hat):
+    def compute_local_grad_and_hess(self, y_hat):
 
         loss_method = self.loss_fn
         if self.task_type == consts.CLASSIFICATION:
@@ -234,7 +248,7 @@ class HomoSecureBoostingTreeClient(BoostingTree):
     def sync_feature_num(self):
         self.transfer_inst.feature_number.remote(self.feature_num, role=consts.ARBITER, idx=-1, suffix=('feat_num', ))
 
-    def sync_local_loss(self, cur_loss: float, sample_num: int,suffix):
+    def sync_local_loss(self, cur_loss: float, sample_num: int, suffix):
         data = {'cur_loss': cur_loss, 'sample_num': sample_num}
         self.transfer_inst.loss_status.remote(data, role=consts.ARBITER, idx=-1, suffix=suffix)
         LOGGER.debug('loss status sent')
@@ -266,7 +280,7 @@ class HomoSecureBoostingTreeClient(BoostingTree):
     def label_alignment(self, labels: List[int]):
         self.transfer_inst.local_labels.remote(labels, suffix=('label_align', ))
 
-    def fit(self, data_inst:DTable, validate_data=None,):
+    def fit(self, data_inst: DTable, validate_data=None,):
 
         # binning
         # data_inst = self.data_alignment(data_inst)
@@ -278,14 +292,18 @@ class HomoSecureBoostingTreeClient(BoostingTree):
         # sync feature num
         self.sync_feature_num()
 
+        # initialize validation strategy
+        self.validation_strategy = self.init_validation_strategy(train_data=data_inst, validate_data=validate_data,)
+
         # check labels
         # TODO throws error when one sample only
         local_classes = self.check_labels(self.data_bin)
 
-        # FIXME For testing, only keey one sample for host
-        if self.role == consts.HOST:
-            self.data_bin = self.data_bin.filter(lambda k, v: k == '0')
+        # # FIXME For testing, only keep one sample for host
+        # if self.role == consts.HOST:
+        #     self.data_bin = self.data_bin.filter(lambda k, v: k == '0')
 
+        # sync label class and set y
         if self.task_type == consts.CLASSIFICATION:
             self.transfer_inst.local_labels.remote(local_classes, role=consts.ARBITER, suffix=('label_align', ))
             new_label_mapping = self.transfer_inst.label_mapping.get(idx=0, suffix=('label_mapping', ))
@@ -304,6 +322,13 @@ class HomoSecureBoostingTreeClient(BoostingTree):
         # set y_hat_val
         self.y_hat, self.init_score = self.loss_fn.initialize(self.y) if self.tree_dim == 1 else \
             self.loss_fn.initialize(self.y, self.tree_dim)
+
+        # set loss callback
+        self.callback_meta("loss",
+                           "train",
+                           MetricMeta(name="train",
+                                      metric_type="LOSS",
+                                      extra_metas={"unit_name": "iters"}))
 
         for epoch_idx in range(self.num_trees):
 
@@ -327,18 +352,35 @@ class HomoSecureBoostingTreeClient(BoostingTree):
 
             # sync loss status
             loss = self.compute_local_loss(self.y, self.y_hat)
+
+            self.callback_metric("loss",
+                                 "train",
+                                 [Metric(epoch_idx, loss)])
+
             self.local_loss_history.append(loss)
-            self.sync_local_loss(loss, self.data_bin.count(), suffix=(epoch_idx,))
+            self.aggregator.send_local_loss(loss, self.data_bin.count(), suffix=(epoch_idx,))
+
+            # validate
+            if self.validation_strategy:
+                self.validation_strategy.validate(self, epoch_idx)
 
             # check stop flag if n_iter_no_change is True
             if self.n_iter_no_change:
-                should_stop = self.sync_stop_flag(suffix=(epoch_idx, ))
+                should_stop = self.aggregator.get_converge_status(suffix=(str(epoch_idx), ))
                 LOGGER.debug('got stop flag {}'.format(should_stop))
                 if should_stop:
                     LOGGER.debug('stop triggered')
                     break
 
             LOGGER.debug('fitting one tree done, cur local loss is {}'.format(loss))
+
+        self.callback_meta("loss",
+                           "train",
+                           MetricMeta(name="train",
+                                      metric_type="LOSS",
+                                      extra_metas={"Best": min(self.local_loss_history)}))
+
+        LOGGER.debug('fitting homo decision tree done')
 
     def predict(self,  data_inst: DTable):
 
@@ -468,6 +510,8 @@ class HomoSecureBoostingTreeClient(BoostingTree):
             return EvaluateParam(eval_type="regression")
 
     def export_model(self):
+        if self.need_cv:
+            return None
         return self.get_cur_model()
 
     def load_model(self, model_dict):

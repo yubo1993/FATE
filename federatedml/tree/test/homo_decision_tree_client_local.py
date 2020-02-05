@@ -27,7 +27,7 @@ from typing import List,Dict,Tuple
 from federatedml.tree.splitter import SplitInfo
 import pandas as pd
 
-from federatedml.tree.homo_secureboosting_aggregator import SecureBoostClientAggregator
+from federatedml.tree.homo_secureboosting_aggregator import DecisionTreeClientAggregator
 
 LOGGER = log_utils.getLogger()
 

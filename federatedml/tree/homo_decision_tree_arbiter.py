@@ -7,7 +7,7 @@ from federatedml.protobuf.generated.boosting_tree_model_meta_pb2 import Decision
 from federatedml.protobuf.generated.boosting_tree_model_param_pb2 import DecisionTreeModelParam
 from federatedml.transfer_variable.transfer_class.homo_decision_tree_transfer_variable import \
     HomoDecisionTreeTransferVariable
-from federatedml.tree.homo_secureboosting_aggregator import SecureBoostArbiterAggregator
+from federatedml.tree.homo_secureboosting_aggregator import DecisionTreeArbiterAggregator
 from federatedml.util import consts
 from federatedml.tree import FeatureHistogram
 from federatedml.tree import DecisionTree
@@ -25,7 +25,7 @@ import numpy as np
 from typing import List,Dict,Tuple
 from federatedml.tree.splitter import SplitInfo
 from arch.api.utils import log_utils
-from federatedml.tree.homo_secureboosting_aggregator import SecureBoostArbiterAggregator
+from federatedml.tree.homo_secureboosting_aggregator import DecisionTreeArbiterAggregator
 
 
 LOGGER = log_utils.getLogger()
@@ -55,7 +55,7 @@ class HomoDecisionTreeArbiter(DecisionTree):
         self.tree_idx = tree_idx
         # secure aggregator
         self.set_flowid(flow_id)
-        self.aggregator = SecureBoostArbiterAggregator(transfer_variable=self.transfer_inst)
+        self.aggregator = DecisionTreeArbiterAggregator(transfer_variable=self.transfer_inst)
 
         # stored histogram for faster computation {node_id:histogram_bag}
         self.stored_histograms = {}
@@ -90,6 +90,20 @@ class HomoDecisionTreeArbiter(DecisionTree):
         LOGGER.debug('num of histograms {}'.format(len(node_local_histogram)))
         return node_local_histogram
 
+    def histogram_subtraction(self, left_node_histogram, stored_histograms):
+        # histogram subtraction
+        all_histograms = []
+        if len(stored_histograms) == 0:
+            all_histograms = left_node_histogram
+        else:
+            for left_hist in left_node_histogram:
+                all_histograms.append(left_hist)
+                right_hist = self.stored_histograms[left_hist.p_hid] - left_hist
+                right_hist.hid, right_hist.p_hid = left_hist.hid + 1, right_hist.p_hid
+                all_histograms.append(right_hist)
+
+        return all_histograms
+
     def fit(self):
 
         LOGGER.info('begin to fit homo decision tree, epoch {}, tree idx {}'.format(self.epoch_idx, self.tree_idx))
@@ -109,9 +123,19 @@ class HomoDecisionTreeArbiter(DecisionTree):
             # get cur layer node num:
             cur_layer_node_num = self.sync_node_sample_numbers(suffix=(dep, self.epoch_idx, self.tree_idx))
             LOGGER.debug('we have {} nodes to split at this layer'.format(cur_layer_node_num))
-            for batch_id,i in enumerate(range(0, cur_layer_node_num, self.max_split_nodes)):
-                node_local_histogram = self.sync_local_histogram(suffix=(batch_id, dep, self.epoch_idx, self.tree_idx))
-                best_splits = self.federated_find_best_split(node_local_histogram, parallel_partitions=10)
+            for batch_id, i in enumerate(range(0, cur_layer_node_num, self.max_split_nodes)):
+
+                left_node_histogram = self.sync_local_histogram(suffix=(batch_id, dep, self.epoch_idx, self.tree_idx))
+
+                all_histograms = self.histogram_subtraction(left_node_histogram, self.stored_histograms)
+
+                # store histogram
+                self.stored_histograms = {}
+                for left_hist in all_histograms:
+                    self.stored_histograms[left_hist.hid] = left_hist
+
+                # FIXME parallel_partition is stable, let it be a parameter ?
+                best_splits = self.federated_find_best_split(all_histograms, parallel_partitions=10)
                 split_info += best_splits
 
             LOGGER.debug('best_splits found')

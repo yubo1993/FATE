@@ -28,7 +28,7 @@ from federatedml.tree.splitter import SplitInfo
 import copy
 import pandas as pd
 
-from federatedml.tree.homo_secureboosting_aggregator import SecureBoostClientAggregator
+from federatedml.tree.homo_secureboosting_aggregator import DecisionTreeClientAggregator
 
 LOGGER = log_utils.getLogger()
 
@@ -87,7 +87,7 @@ class HomoDecisionTreeClient(DecisionTree):
         if mode == 'train':
             self.role = role
             self.set_flowid(flow_id)
-            self.aggregator = SecureBoostClientAggregator(role=self.role, transfer_variable=self.transfer_inst)
+            self.aggregator = DecisionTreeClientAggregator(role=self.role, transfer_variable=self.transfer_inst)
         elif mode == 'predict':
             self.role, self.aggregator = None, None
 
@@ -142,28 +142,19 @@ class HomoDecisionTreeClient(DecisionTree):
         LOGGER.info("begin to accumulate histograms")
         acc_histograms = FeatureHistogram.accumulate_histogram(histograms)
 
-        # histogram subtraction
-        full_acc_histograms = []
+        # histogram id and parent histogram id
         for idx, hist_bag in enumerate(acc_histograms):
-
             node = cur_nodes[idx]
-
             if node.id == 0:
-                full_acc_histograms.append(hist_bag)
+                hist_bag.hid = 0
                 break
-
             parent_node = tree[node.parent_nodeid]
-            sibling_hist = parent_node.stored_histogram - hist_bag
-            if node.is_left_node:
-                full_acc_histograms.append(hist_bag)
-                full_acc_histograms.append(sibling_hist)
-            else:
-                full_acc_histograms.append(sibling_hist)
-                full_acc_histograms.append(hist_bag)
+            hist_bag.hid = node.id
+            hist_bag.p_hid = parent_node.id
 
-        return full_acc_histograms
+        return acc_histograms
 
-    def update_tree(self, cur_to_split: List[Node], split_info: List[SplitInfo], histograms: List[HistogramBag]):
+    def update_tree(self, cur_to_split: List[Node], split_info: List[SplitInfo]):
         """
         update current tree structure
         ----------
@@ -183,7 +174,6 @@ class HomoDecisionTreeClient(DecisionTree):
             cur_to_split[idx].fid = split_info[idx].best_fid
             cur_to_split[idx].bid = split_info[idx].best_bid
             cur_to_split[idx].missing_dir = split_info[idx].missing_dir
-            cur_to_split[idx].stored_histogram = histograms[idx]
 
             p_id = self.tree_node_num
             l_id, r_id = self.tree_node_num + 1, self.tree_node_num + 2
@@ -231,7 +221,7 @@ class HomoDecisionTreeClient(DecisionTree):
 
     def assign_a_instance(self, row, tree: List[Node], bin_sparse_point, use_missing, use_zero_as_missing):
 
-        leaf_status,nodeid = row[1]
+        leaf_status, nodeid = row[1]
         node = tree[nodeid]
         if node.is_leaf:
             return node.weight
@@ -378,8 +368,7 @@ class HomoDecisionTreeClient(DecisionTree):
 
             LOGGER.debug('got best splits from arbiter')
 
-            new_layer_node = self.update_tree(self.cur_layer_node, split_info, histograms= \
-                agg_histograms)
+            new_layer_node = self.update_tree(self.cur_layer_node, split_info)
             self.cur_layer_node = new_layer_node
             self.update_feature_importance(split_info)
 
@@ -404,7 +393,7 @@ class HomoDecisionTreeClient(DecisionTree):
 
     def traverse_tree(self, data_inst: Instance, tree: List[Node], use_missing=True, zero_as_missing=True):
 
-        nid = 0 # root node id
+        nid = 0# root node id
         while True:
 
             if tree[nid].is_leaf:

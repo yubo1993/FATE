@@ -1076,6 +1076,27 @@
    ]
   }
  },
+ "HomoFeatureBinningTransferVariable": {
+  "guest_split_points": {
+   "src": "guest",
+   "dst": [
+    "arbiter"
+   ]
+  },
+  "host_split_points": {
+   "src": "host",
+   "dst": [
+    "arbiter"
+   ]
+  },
+  "agg_split_points": {
+   "src": "arbiter",
+   "dst": [
+    "guest",
+    "host"
+   ]
+  }
+ },
  "HomoLRTransferVariable": {
   "guest_uuid": {
    "src": "guest",

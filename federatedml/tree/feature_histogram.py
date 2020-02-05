@@ -41,7 +41,7 @@ class HistogramBag(object):
     holds histograms
     """
 
-    def __init__(self, component_num: int = 0, bin_num: list = None, valid_dict: dict = None, h_id: int = -1,\
+    def __init__(self, component_num: int = 0, bin_num: list = None, valid_dict: dict = None, hid: int = -1, \
             p_hid: int = -1):
 
         """
@@ -59,7 +59,7 @@ class HistogramBag(object):
 
         self.bin_num = bin_num
         self.component_num = component_num
-        self.h_id = h_id
+        self.hid = hid
         self.p_hid = p_hid
         self.bag = []
         component_num = component_num
@@ -143,7 +143,7 @@ class FeatureHistogramWeights(Weights):
         else:
             return FeatureHistogramWeights(list_of_histogrambags=hists)
 
-    def binary_op(self, other:'FeatureHistogramWeights', func, inplace:bool):
+    def binary_op(self, other: 'FeatureHistogramWeights', func, inplace:bool):
 
         new_weights = []
         hists,other_hists = self.hists,other.hists

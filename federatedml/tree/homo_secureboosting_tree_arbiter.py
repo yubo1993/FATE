@@ -1,34 +1,17 @@
-from fate_flow.entity.metric import Metric
-from fate_flow.entity.metric import MetricMeta
-from federatedml.feature.binning.quantile_binning import QuantileBinning
-from federatedml.feature.fate_element_type import NoneType
-from federatedml.param.feature_binning_param import FeatureBinningParam
-from federatedml.param.evaluation_param import EvaluateParam
-from federatedml.util.classify_label_checker import ClassifyLabelChecker
-from federatedml.util.classify_label_checker import RegressionLabelChecker
-from federatedml.tree import HeteroDecisionTreeGuest
-from federatedml.optim.convergence import converge_func_factory
 from federatedml.tree import BoostingTree
 from federatedml.tree.homo_decision_tree_arbiter import HomoDecisionTreeArbiter
 from federatedml.transfer_variable.transfer_class.homo_secure_boost_transfer_variable \
     import HomoSecureBoostingTreeTransferVariable
-from federatedml.transfer_variable.transfer_class.homo_decision_tree_transfer_variable import \
-    HomoDecisionTreeTransferVariable
-from federatedml.tree.homo_secureboosting_aggregator import SecureBoostArbiterAggregator
 from federatedml.util import consts
-from federatedml.protobuf.generated.boosting_tree_model_meta_pb2 import ObjectiveMeta
-from federatedml.protobuf.generated.boosting_tree_model_meta_pb2 import QuantileMeta
-from federatedml.protobuf.generated.boosting_tree_model_meta_pb2 import BoostingTreeModelMeta
-from federatedml.protobuf.generated.boosting_tree_model_param_pb2 import FeatureImportanceInfo
-from federatedml.protobuf.generated.boosting_tree_model_param_pb2 import BoostingTreeModelParam
 from arch.api.utils import log_utils
-import numpy as np
-import functools
-from operator import itemgetter
 from numpy import random
 from federatedml.optim.convergence import converge_func_factory
-from federatedml.util import abnormal_detection
 from typing import List
+from federatedml.tree.homo_secureboosting_aggregator import SecureBoostArbiterAggregator
+from federatedml.feature.homo_feature_binning.homo_split_points import HomoSplitPointCalculator
+
+from fate_flow.entity.metric import Metric
+from fate_flow.entity.metric import MetricMeta
 
 LOGGER = log_utils.getLogger()
 
@@ -43,7 +26,11 @@ class HomoSecureBoostingTreeArbiter(BoostingTree):
         self.transfer_inst = HomoSecureBoostingTreeTransferVariable()
         self.check_convergence_func = None
         self.tree_dim = None
+        self.aggregator = SecureBoostArbiterAggregator(transfer_variable=self.transfer_inst)
+        self.global_loss_history = []
 
+        # federated_binning obj
+        self.binning_obj = HomoSplitPointCalculator(role=self.role,)
 
     def sample_valid_feature(self):
 
@@ -74,7 +61,7 @@ class HomoSecureBoostingTreeArbiter(BoostingTree):
         return total_loss/total_num
 
     def sync_tree_dim(self):
-        tree_dims = self.transfer_inst.tree_dim.get(idx=-1,suffix=('tree_dim', ))
+        tree_dims = self.transfer_inst.tree_dim.get(idx=-1, suffix=('tree_dim', ))
         dim0 = tree_dims[0]
         for dim in tree_dims[1:]:
             assert dim0 == dim
@@ -99,18 +86,26 @@ class HomoSecureBoostingTreeArbiter(BoostingTree):
         self.transfer_inst.label_mapping.remote(label_mapping, idx=-1, suffix=('label_mapping', ))
         return label_mapping
 
+    def federate_binning(self):
+        self.binning_obj.average_run(data_instances=None, bin_num=self.bin_num)
+
     def fit(self, data_inst, valid_inst=None):
 
         # initializing
+        self.federate_binning()
+
         self.feature_num = self.sync_feature_num()
         self.tree_dim = 1
+
         if self.task_type == consts.CLASSIFICATION:
             label_mapping = self.label_alignment()
             LOGGER.debug('label mapping is {}'.format(label_mapping))
             self.tree_dim = len(label_mapping) if len(label_mapping) > 2 else 1
 
+        self.federate_binning()
+
         if self.n_iter_no_change:
-            self.check_convergence_func = converge_func_factory("diff",self.tol)
+            self.check_convergence_func = converge_func_factory("diff", self.tol)
 
         LOGGER.debug('begin to fit a boosting tree')
         for epoch_idx in range(self.num_trees):
@@ -122,14 +117,26 @@ class HomoSecureBoostingTreeArbiter(BoostingTree):
                                                    flow_id=flow_id, tree_idx=t_idx)
                 new_tree.fit()
 
-            global_loss = self.sync_current_loss(suffix=(epoch_idx, ))
+            global_loss = self.aggregator.aggregate_loss(suffix=(epoch_idx, ))
+            self.global_loss_history.append(global_loss)
             LOGGER.debug('cur epoch global loss is {}'.format(global_loss))
+
+            self.callback_metric("loss",
+                                 "train",
+                                 [Metric(epoch_idx, global_loss)])
+
             if self.n_iter_no_change:
-                should_stop = self.check_convergence(cur_loss=global_loss)
-                self.sync_stop_flag(should_stop, suffix=(epoch_idx, ))
+                should_stop = self.aggregator.broadcast_converge_status(self.check_convergence, (global_loss, ),
+                                                                        suffix=(epoch_idx, ))
                 LOGGER.debug('stop flag sent')
                 if should_stop:
                     break
+
+        self.callback_meta("loss",
+                           "train",
+                           MetricMeta(name="train",
+                                      metric_type="LOSS",
+                                      extra_metas={"Best": min(self.global_loss_history)}))
 
         LOGGER.debug('fitting homo decision tree done')
 

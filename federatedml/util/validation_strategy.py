@@ -53,7 +53,7 @@ class ValidationStrategy(object):
                 if validate_data not equal to None, and judge need to validate data according to validation_freqs,
                 validate data will be used for evaluating
     """
-    def __init__(self, role=None, mode=None, validation_freqs=None,sync_status=False):
+    def __init__(self, role=None, mode=None, validation_freqs=None, sync_status=False):
         self.validation_freqs = validation_freqs
         self.role = role
         self.mode = mode
