@@ -65,12 +65,6 @@ class CWJBase(ModelBase):
     def fit(self, train=None, validate=None):
         LOGGER.debug('fit called')
         data_inst = self.data_alignment(train)
-
-        a = list(data_inst.collect())
-        LOGGER.debug('showing labels')
-        for feat in a:
-            LOGGER.debug(feat[1].label)
-
         if train is not None:
             LOGGER.debug('showing inst_num:{}'.format(data_inst.count()))
         binning_result = self.binning_obj.average_run(data_instances=data_inst, bin_num=20)

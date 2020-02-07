@@ -156,15 +156,21 @@ class HomoSecureBoostingTreeClient(BoostingTree):
 
     def federated_binning(self,  data_instance) -> Tuple[DTable, np.array, dict]:
 
-        sparse_data = self.data_alignment(data_instance)
-        binning_result = self.binning_obj.average_run(data_instances=sparse_data,
-                                                      bin_num=self.bin_num)
-        ndarr_list = [binning_result[k] for k in binning_result]
-        arr = np.stack(ndarr_list)
-        LOGGER.debug('binning result is {}'.format(binning_result))
-        # federated binning
-        binning = FakeBinning(bin_num=10)
-        return binning.fit(data_instance, split_points=arr)
+        if self.use_missing:
+            binning_result = self.binning_obj.average_run(data_instances=data_instance,
+                                                          bin_num=self.bin_num, abnormal_list=[NoneType()])
+        else:
+            binning_result = self.binning_obj.average_run(data_instances=data_instance,
+                                                          bin_num=self.bin_num)
+
+        # ndarr_list = [binning_result[k] for k in binning_result]
+        # arr = np.stack(ndarr_list)
+        # LOGGER.debug('binning result is {}'.format(binning_result))
+        # # federated binning
+        # binning = FakeBinning(bin_num=10)
+        # return binning.fit(data_instance, split_points=arr)
+
+        return self.binning_obj.convert_feature_to_bin(data_instance, binning_result)
 
     def compute_local_grad_and_hess(self, y_hat):
 
@@ -283,8 +289,10 @@ class HomoSecureBoostingTreeClient(BoostingTree):
     def fit(self, data_inst: DTable, validate_data=None,):
 
         # binning
-        # data_inst = self.data_alignment(data_inst)
+        data_inst = self.data_alignment(data_inst)
         self.data_bin, self.bin_split_points, self.bin_sparse_points = self.federated_binning(data_inst)
+
+        LOGGER.debug('showing bin_split_points {}'.format(self.bin_split_points))
 
         # set feature_num
         self.feature_num = self.bin_split_points.shape[0]
@@ -310,6 +318,7 @@ class HomoSecureBoostingTreeClient(BoostingTree):
             self.classes_ = [new_label_mapping[k] for k in new_label_mapping]
             # set labels
             self.num_classes = len(new_label_mapping)
+            LOGGER.debug('num_classes is {}'.format(self.num_classes))
             self.y = self.data_bin.mapValues(lambda instance: new_label_mapping[instance.label])
             # set tree dimension
             self.tree_dim = self.num_classes if self.num_classes > 2 else 1
@@ -397,10 +406,6 @@ class HomoSecureBoostingTreeClient(BoostingTree):
                 idx += 1
                 predict_val = tree_inst.predict(to_predict_data)
                 self.update_y_hat_val(predict_val, mode='predict', tree_idx=tree_idx)
-
-        LOGGER.debug('got predicted scores')
-
-        LOGGER.debug(list(self.y_hat_predict.collect()))
 
         predict_result = None
 

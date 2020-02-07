@@ -23,7 +23,7 @@ from federatedml.feature.instance import Instance
 from federatedml.param import DecisionTreeParam
 
 import numpy as np
-from typing import List,Dict,Tuple
+from typing import List, Dict, Tuple
 from federatedml.tree.splitter import SplitInfo
 import copy
 import pandas as pd
@@ -87,7 +87,8 @@ class HomoDecisionTreeClient(DecisionTree):
         if mode == 'train':
             self.role = role
             self.set_flowid(flow_id)
-            self.aggregator = DecisionTreeClientAggregator(role=self.role, transfer_variable=self.transfer_inst)
+            self.aggregator = DecisionTreeClientAggregator(role=self.role, transfer_variable=self.transfer_inst,
+                                                           verbose=False)
         elif mode == 'predict':
             self.role, self.aggregator = None, None
 
@@ -124,15 +125,35 @@ class HomoDecisionTreeClient(DecisionTree):
         self.aggregator.send_histogram(acc_histogram,suffix=suffix)
         LOGGER.debug('local histogram sent at layer {}'.format(suffix[0]))
 
-    def get_node_map(self, nodes: List[Node]):
+    def get_node_map(self, nodes: List[Node], left_node_only=False):
         node_map = {}
-        for idx, node in enumerate(nodes):
-            if node.id == 0 or node.is_left_node:
-                node_map[node.id] = idx
+        idx = 0
+        for node in nodes:
+            if node.id != 0 and (not node.is_left_node and left_node_only):
+                continue
+            node_map[node.id] = idx
+            idx += 1
         return node_map
 
-    def get_local_histogram(self, cur_nodes: List[Node], tree: List[Node], node_map, g_h, table_with_assign,
+    def get_local_histogram(self, cur_to_split: List[Node], g_h, table_with_assign,
                             split_points, sparse_point, valid_feature):
+        LOGGER.info("start to get node histograms")
+        node_map = self.get_node_map(nodes=cur_to_split)
+        histograms = FeatureHistogram.calculate_histogram(
+            table_with_assign, g_h,
+            split_points, sparse_point,
+            valid_feature, node_map,
+            self.use_missing, self.zero_as_missing)
+        LOGGER.info("begin to accumulate histograms")
+        acc_histograms = FeatureHistogram.accumulate_histogram(histograms)
+
+        return acc_histograms
+
+    def get_left_node_local_histogram(self, cur_nodes: List[Node], tree: List[Node], g_h, table_with_assign,
+                            split_points, sparse_point, valid_feature):
+
+        node_map = self.get_node_map(cur_nodes, left_node_only=True)
+
         LOGGER.info("start to get node histograms")
         histograms = FeatureHistogram.calculate_histogram(
             table_with_assign, g_h,
@@ -142,15 +163,16 @@ class HomoDecisionTreeClient(DecisionTree):
         LOGGER.info("begin to accumulate histograms")
         acc_histograms = FeatureHistogram.accumulate_histogram(histograms)
 
+        left_nodes = []
+        for node in cur_nodes:
+            if node.is_left_node or node.id == 0:
+                left_nodes.append(node)
+
         # histogram id and parent histogram id
-        for idx, hist_bag in enumerate(acc_histograms):
-            node = cur_nodes[idx]
-            if node.id == 0:
-                hist_bag.hid = 0
-                break
-            parent_node = tree[node.parent_nodeid]
+        for node, hist_bag in zip(left_nodes, acc_histograms):
+            # LOGGER.debug('node id {}, node parent id {}, cur tree {}'.format(node.id, node.parent_nodeid, len(tree)))
             hist_bag.hid = node.id
-            hist_bag.p_hid = parent_node.id
+            hist_bag.p_hid = node.parent_nodeid
 
         return acc_histograms
 
@@ -175,7 +197,7 @@ class HomoDecisionTreeClient(DecisionTree):
             cur_to_split[idx].bid = split_info[idx].best_bid
             cur_to_split[idx].missing_dir = split_info[idx].missing_dir
 
-            p_id = self.tree_node_num
+            p_id = cur_to_split[idx].id
             l_id, r_id = self.tree_node_num + 1, self.tree_node_num + 2
             cur_to_split[idx].left_nodeid, cur_to_split[idx].right_nodeid = l_id, r_id
             self.tree_node_num += 2
@@ -261,7 +283,7 @@ class HomoDecisionTreeClient(DecisionTree):
 
         assign_result = assign_result.subtractByKey(leaf_val)
 
-        return assign_result,leaf_val
+        return assign_result, leaf_val
 
     def get_node_sample_weights(self, inst2node: DTable, tree_node: List[Node]):
         """
@@ -297,7 +319,7 @@ class HomoDecisionTreeClient(DecisionTree):
         LOGGER.debug('g_sum is {},h_sum is {}'.format(g_sum,h_sum))
 
         # get aggregated root info
-        self.aggregator.send_local_root_node_info(g_sum, h_sum,suffix=('root_node_sync1', self.epoch_idx))
+        self.aggregator.send_local_root_node_info(g_sum, h_sum, suffix=('root_node_sync1', self.epoch_idx))
         g_h_dict = self.aggregator.get_aggregated_root_info(suffix=('root_node_sync2', self.epoch_idx))
         global_g_sum, global_h_sum = g_h_dict['g_sum'], g_h_dict['h_sum']
 
@@ -340,11 +362,11 @@ class HomoDecisionTreeClient(DecisionTree):
                 cur_to_split = self.cur_layer_node[i:i+self.max_split_nodes]
 
                 node_map = self.get_node_map(nodes=cur_to_split)
+                LOGGER.debug('node map is {}'.format(node_map))
                 LOGGER.debug('computing histogram for batch{} at depth{}'.format(batch_id, dep))
-                local_histogram = self.get_local_histogram(
+                local_histogram = self.get_left_node_local_histogram(
                     cur_nodes=cur_to_split,
                     tree=self.tree_node,
-                    node_map=node_map,
                     g_h=self.g_h,
                     table_with_assign=table_with_assignment,
                     split_points=self.bin_split_points,
@@ -364,7 +386,6 @@ class HomoDecisionTreeClient(DecisionTree):
                 #                                        self.zero_as_missing,valid_features=self.valid_features)
 
             split_info = self.sync_best_splits(suffix=(dep, self.epoch_idx))
-
 
             LOGGER.debug('got best splits from arbiter')
 

@@ -55,7 +55,7 @@ class HomoDecisionTreeArbiter(DecisionTree):
         self.tree_idx = tree_idx
         # secure aggregator
         self.set_flowid(flow_id)
-        self.aggregator = DecisionTreeArbiterAggregator(transfer_variable=self.transfer_inst)
+        self.aggregator = DecisionTreeArbiterAggregator(transfer_variable=self.transfer_inst, verbose=False)
 
         # stored histogram for faster computation {node_id:histogram_bag}
         self.stored_histograms = {}
@@ -93,14 +93,15 @@ class HomoDecisionTreeArbiter(DecisionTree):
     def histogram_subtraction(self, left_node_histogram, stored_histograms):
         # histogram subtraction
         all_histograms = []
-        if len(stored_histograms) == 0:
-            all_histograms = left_node_histogram
-        else:
-            for left_hist in left_node_histogram:
-                all_histograms.append(left_hist)
-                right_hist = self.stored_histograms[left_hist.p_hid] - left_hist
-                right_hist.hid, right_hist.p_hid = left_hist.hid + 1, right_hist.p_hid
-                all_histograms.append(right_hist)
+        for left_hist in left_node_histogram:
+            all_histograms.append(left_hist)
+            # LOGGER.debug('hist id is {}, pid is {}'.format(left_hist.hid, left_hist.p_hid))
+            # root node hist
+            if left_hist.hid == 0:
+                continue
+            right_hist = stored_histograms[left_hist.p_hid] - left_hist
+            right_hist.hid, right_hist.p_hid = left_hist.hid + 1, right_hist.p_hid
+            all_histograms.append(right_hist)
 
         return all_histograms
 

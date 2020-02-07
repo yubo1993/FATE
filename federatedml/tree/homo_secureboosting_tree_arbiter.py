@@ -86,14 +86,14 @@ class HomoSecureBoostingTreeArbiter(BoostingTree):
         self.transfer_inst.label_mapping.remote(label_mapping, idx=-1, suffix=('label_mapping', ))
         return label_mapping
 
-    def federate_binning(self):
-        self.binning_obj.average_run(data_instances=None, bin_num=self.bin_num)
+    def federated_binning(self):
+        self.binning_obj.average_run(None, bin_num=self.bin_num)
+        self.binning_obj.convert_feature_to_bin(None, None)
 
     def fit(self, data_inst, valid_inst=None):
 
+        self.federated_binning()
         # initializing
-        self.federate_binning()
-
         self.feature_num = self.sync_feature_num()
         self.tree_dim = 1
 
@@ -102,7 +102,7 @@ class HomoSecureBoostingTreeArbiter(BoostingTree):
             LOGGER.debug('label mapping is {}'.format(label_mapping))
             self.tree_dim = len(label_mapping) if len(label_mapping) > 2 else 1
 
-        self.federate_binning()
+        self.federated_binning()
 
         if self.n_iter_no_change:
             self.check_convergence_func = converge_func_factory("diff", self.tol)

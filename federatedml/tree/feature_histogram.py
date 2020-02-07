@@ -218,6 +218,7 @@ class FeatureHistogram(object):
         for _, value in kv_iterator:
             data_bin, nodeid_state = value[0]
             unleaf_state, nodeid = nodeid_state
+            # when conduct hist-subtraction,only compute hist for left nodes
             if unleaf_state == 0 or nodeid not in node_map:
                 continue
             g, h = value[1]
@@ -243,10 +244,14 @@ class FeatureHistogram(object):
 
             feat_num = bin_split_points.shape[0]
             bin_num = [bin_split_points[fid].shape[0] + 1 + missing_bin for fid in range(feat_num)]
-            hist_bag = HistogramBag(feat_num,bin_num,valid_features)
+            hist_bag = HistogramBag(feat_num, bin_num, valid_features)
             node_histograms.append(hist_bag)
 
+        if len(node_map) == 0:
+            return node_histograms
+
         for rid in range(data_record):
+
             nid = node_map.get(node_ids[rid])
             zero_opt_node_sum[nid][0] += grad[rid]
             zero_opt_node_sum[nid][1] += hess[rid]
