@@ -99,7 +99,7 @@ GBDT model without leaking any data sample.
 The figure below shows the overall framework of the homo secureboost algorithm.
 
 <div style="text-align:center" align=center>
-<img src="./images/homo_framework.png" alt="framework" width="500" height="250" />
+<img src="./images/homo_framework.png" alt="framework" width="500" height="300" />
 <br/>
 Figure 1: Framework of Homo SecureBoost</div>
 
@@ -131,7 +131,7 @@ The key steps of learning a homo secureboost model are described below:
     leakage is prevented. Figure below shows how histogram secure aggregations are conducted.
     
     <div style="text-align:center" align=center>
-    <img src="./images/secure_agg.png" alt="framework" width="500" height="250" />
+    <img src="./images/secure_agg.png" alt="framework" width="500" height="400" />
     <br/>
     Figure 2: Secure aggregation</div>
     
