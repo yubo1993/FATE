@@ -1,5 +1,5 @@
 from federatedml.tree import BoostingTree
-from federatedml.tree.homo_decision_tree_arbiter import HomoDecisionTreeArbiter
+from federatedml.tree.homo.homo_decision_tree_arbiter import HomoDecisionTreeArbiter
 from federatedml.transfer_variable.transfer_class.homo_secure_boost_transfer_variable \
     import HomoSecureBoostingTreeTransferVariable
 from federatedml.util import consts
@@ -7,7 +7,7 @@ from arch.api.utils import log_utils
 from numpy import random
 from federatedml.optim.convergence import converge_func_factory
 from typing import List
-from federatedml.tree.homo_secureboosting_aggregator import SecureBoostArbiterAggregator
+from federatedml.tree.homo.homo_secureboosting_aggregator import SecureBoostArbiterAggregator
 from federatedml.feature.homo_feature_binning.homo_split_points import HomoSplitPointCalculator
 
 from fate_flow.entity.metric import Metric
@@ -34,7 +34,7 @@ class HomoSecureBoostingTreeArbiter(BoostingTree):
 
     def sample_valid_feature(self):
 
-        chosen_feature = random.choice(range(0, self.feature_num),\
+        chosen_feature = random.choice(range(0, self.feature_num),
                                        max(1, int(self.subsample_feature_rate * self.feature_num)), replace=False)
         valid_features = [False for i in range(self.feature_num)]
         for fid in chosen_feature:

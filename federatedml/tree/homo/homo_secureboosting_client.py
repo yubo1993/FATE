@@ -1,7 +1,6 @@
 from federatedml.feature.fate_element_type import NoneType
 from operator import itemgetter
 
-from federatedml.tree import BoostingTree
 from federatedml.param.evaluation_param import EvaluateParam
 from federatedml.protobuf.generated.boosting_tree_model_meta_pb2 import BoostingTreeModelMeta
 from federatedml.protobuf.generated.boosting_tree_model_meta_pb2 import ObjectiveMeta
@@ -10,6 +9,7 @@ from federatedml.protobuf.generated.boosting_tree_model_param_pb2 import Boostin
 from federatedml.protobuf.generated.boosting_tree_model_param_pb2 import FeatureImportanceInfo
 from federatedml.transfer_variable.transfer_class.homo_secure_boost_transfer_variable import \
     HomoSecureBoostingTreeTransferVariable
+
 from federatedml.util import consts
 from federatedml.loss import SigmoidBinaryCrossEntropyLoss
 from federatedml.loss import SoftmaxCrossEntropyLoss
@@ -19,10 +19,10 @@ from federatedml.loss import LeastAbsoluteErrorLoss
 from federatedml.loss import TweedieLoss
 from federatedml.loss import LogCoshLoss
 from federatedml.loss import FairLoss
-from federatedml.tree.homo_decision_tree_client import HomoDecisionTreeClient
-from federatedml.feature.instance import Instance
-from federatedml.feature.sparse_vector import SparseVector
-from federatedml.feature.homo_feature_binning.homo_split_points import HomoSplitPointCalculator
+
+from federatedml.tree import BoostingTree
+from federatedml.tree import HomoDecisionTreeClient
+
 
 from fate_flow.entity.metric import Metric
 from fate_flow.entity.metric import MetricMeta
@@ -30,7 +30,7 @@ from fate_flow.entity.metric import MetricMeta
 import functools
 from numpy import random
 
-from typing import List, Tuple, Dict
+from typing import List, Tuple
 from arch.api.table.eggroll.table_impl import DTable
 import numpy as np
 from arch.api.utils import log_utils
@@ -39,55 +39,6 @@ from federatedml.util.classify_label_checker import ClassifyLabelChecker, Regres
 
 LOGGER = log_utils.getLogger()
 
-class LocalTestLogger(object):
-
-    def __init__(self):
-        pass
-
-    def debug(self, *args):
-        print(*args)
-
-    def info(self, *args):
-        self.debug(*args)
-
-class FakeBinning():
-
-    def __init__(self, bin_num=32):
-        self.bin_num = bin_num
-        self.split_points = None
-
-    def helper(self, instance, split_points):
-        feat = instance.features
-        sparse_feat = []
-        indices = []
-        for idx,  v in enumerate(feat):
-            sparse_feat.append(np.argmax(split_points[idx] > v) - 1)
-            indices.append(idx)
-        return Instance(inst_id=instance.inst_id, features=SparseVector(indices=indices, data=sparse_feat)
-                        , label=instance.label)
-
-    def fit(self, Dtable:DTable, split_points):
-
-        if split_points is None:
-            arr = []
-            for row in Dtable.collect():
-                arr.append(row[1].features)
-
-            arr = np.stack(arr)
-            split_points = []
-            width = arr.shape[1]
-            for num in range(width):
-                col_max = arr[:, num].max()
-                col_min = arr[:, num].min()
-                split_points.append(np.arange(col_min, col_max, (col_max - col_min) / self.bin_num))
-
-            self.split_points = np.stack(split_points)
-        else:
-            self.split_points = split_points
-
-        func = functools.partial(self.helper, split_points=self.split_points)
-        new_table = Dtable.mapValues(func)
-        return new_table, self.split_points, {k: 0 for k in range(self.split_points.shape[0])}
 
 class HomoSecureBoostingTreeClient(BoostingTree):
 
@@ -150,9 +101,9 @@ class HomoSecureBoostingTreeClient(BoostingTree):
             elif loss_type == "log_cosh":
                 self.loss_fn = LogCoshLoss()
             else:
-                raise NotImplementedError("objective %s not supported yet" % (loss_type))
+                raise NotImplementedError("objective %s not supported yet" % loss_type)
         else:
-            raise NotImplementedError("objective %s not supported yet" % (loss_type))
+            raise NotImplementedError("objective %s not supported yet" % loss_type)
 
     def federated_binning(self,  data_instance) -> Tuple[DTable, np.array, dict]:
 
@@ -162,13 +113,6 @@ class HomoSecureBoostingTreeClient(BoostingTree):
         else:
             binning_result = self.binning_obj.average_run(data_instances=data_instance,
                                                           bin_num=self.bin_num)
-
-        # ndarr_list = [binning_result[k] for k in binning_result]
-        # arr = np.stack(ndarr_list)
-        # LOGGER.debug('binning result is {}'.format(binning_result))
-        # # federated binning
-        # binning = FakeBinning(bin_num=10)
-        # return binning.fit(data_instance, split_points=arr)
 
         return self.binning_obj.convert_feature_to_bin(data_instance, binning_result)
 
@@ -202,7 +146,8 @@ class HomoSecureBoostingTreeClient(BoostingTree):
 
         return float(loss)
 
-    def get_subtree_grad_and_hess(self, g_h: DTable, t_idx: int):
+    @staticmethod
+    def get_subtree_grad_and_hess(g_h: DTable, t_idx: int):
         """
         Args:
             g_h: DTable of g_h val
@@ -231,10 +176,6 @@ class HomoSecureBoostingTreeClient(BoostingTree):
     def add_y_hat(f_val, new_f_val, lr=0.1, idx=0):
         f_val[idx] += lr * new_f_val
         return f_val
-
-    def initialize_y_hat(self):
-        return self.loss_fn.initialize(self.y) if self.tree_dim == 1 else \
-            self.loss_fn.initialize(self.y,  self.tree_dim)
 
     def update_y_hat_val(self,  new_val=None,  mode='train',  tree_idx=0):
 
@@ -286,13 +227,11 @@ class HomoSecureBoostingTreeClient(BoostingTree):
     def label_alignment(self, labels: List[int]):
         self.transfer_inst.local_labels.remote(labels, suffix=('label_align', ))
 
-    def fit(self, data_inst: DTable, validate_data=None,):
+    def fit(self, data_inst: DTable, validate_data: DTable = None,):
 
         # binning
         data_inst = self.data_alignment(data_inst)
         self.data_bin, self.bin_split_points, self.bin_sparse_points = self.federated_binning(data_inst)
-
-        LOGGER.debug('showing bin_split_points {}'.format(self.bin_split_points))
 
         # set feature_num
         self.feature_num = self.bin_split_points.shape[0]
@@ -304,12 +243,7 @@ class HomoSecureBoostingTreeClient(BoostingTree):
         self.validation_strategy = self.init_validation_strategy(train_data=data_inst, validate_data=validate_data,)
 
         # check labels
-        # TODO throws error when one sample only
         local_classes = self.check_labels(self.data_bin)
-
-        # # FIXME For testing, only keep one sample for host
-        # if self.role == consts.HOST:
-        #     self.data_bin = self.data_bin.filter(lambda k, v: k == '0')
 
         # sync label class and set y
         if self.task_type == consts.CLASSIFICATION:
@@ -391,11 +325,12 @@ class HomoSecureBoostingTreeClient(BoostingTree):
 
         LOGGER.debug('fitting homo decision tree done')
 
-    def predict(self,  data_inst: DTable):
+    def predict(self, data_inst: DTable):
 
         to_predict_data = self.data_alignment(data_inst)
 
-        self.y_hat_predict, _ = self.initialize_y_hat()
+        init_score = self.init_score
+        self.y_hat_predict = data_inst.mapValues(lambda x: init_score)
 
         round_num = len(self.learnt_tree_param) // self.tree_dim
         idx = 0
@@ -411,23 +346,23 @@ class HomoSecureBoostingTreeClient(BoostingTree):
 
         if self.task_type == consts.REGRESSION and \
                 self.objective_param.objective in ["lse",  "lae",  "huber",  "log_cosh",  "fair",  "tweedie"]:
-            predict_result = data_inst.join(self.y_hat_predict,\
-                                lambda inst,  pred: [inst.label,  float(pred),  float(pred),  {"label": float(pred)}])
+            predict_result = to_predict_data.join(self.y_hat_predict,
+                                                  lambda inst,  pred: [inst.label,  float(pred),  float(pred),
+                                                  {"label": float(pred)}])
 
         elif self.task_type == consts.CLASSIFICATION:
             classes_ = self.classes_
-            # TODO why error here if use loss_func directly ?
             loss_func = self.loss_fn
             if self.num_classes == 2:
                 predicts = self.y_hat_predict.mapValues(lambda f: float(loss_func.predict(f)))
                 threshold = self.predict_param.threshold
-                predict_result = data_inst.join(predicts, lambda inst, pred: [inst.label,
+                predict_result = to_predict_data.join(predicts, lambda inst, pred: [inst.label,
                                                                               classes_[1] if pred > threshold else
                                                                               classes_[0],  pred,
                                                                               {"0": 1 - pred,  "1": pred}])
             else:
                 predicts = self.y_hat_predict.mapValues(lambda f: loss_func.predict(f).tolist())
-                predict_result = data_inst.join(predicts, lambda inst, preds: [inst.label,\
+                predict_result = to_predict_data.join(predicts, lambda inst, preds: [inst.label,\
                                     classes_[np.argmax(preds)], np.max(preds), dict(zip(map(str, classes_), preds))])
 
         return predict_result

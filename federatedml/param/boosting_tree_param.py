@@ -237,8 +237,6 @@ class BoostingTreeParam(BaseParam):
                       if container object in python, will validate data if epochs belong to this container.
                         e.g. validation_freqs = [10, 15], will validate data when epoch equals to 10 and 15.
                       Default: None
-    early_stopping: integer, enable when early_stopping is larger than 0.
-                    stop training when any evaluation metrics don't improve after early_stopping epochs
     """
 
     def __init__(self, tree_param=DecisionTreeParam(), task_type=consts.CLASSIFICATION,
@@ -249,8 +247,7 @@ class BoostingTreeParam(BaseParam):
                  use_missing=False, zero_as_missing=False,
                  encrypted_mode_calculator_param=EncryptedModeCalculatorParam(),
                  predict_param=PredictParam(), cv_param=CrossValidationParam(),
-                 validation_freqs=None,early_stopping=-1):
-
+                 validation_freqs=None):
         self.tree_param = copy.deepcopy(tree_param)
         self.task_type = task_type
         self.objective_param = copy.deepcopy(objective_param)
@@ -266,8 +263,7 @@ class BoostingTreeParam(BaseParam):
         self.encrypted_mode_calculator_param = copy.deepcopy(encrypted_mode_calculator_param)
         self.predict_param = copy.deepcopy(predict_param)
         self.cv_param = copy.deepcopy(cv_param)
-        self.early_stopping = early_stopping
-        self.validation_freqs = 1 if early_stopping > 0 else validation_freqs
+        self.validation_freqs = validation_freqs
 
     def check(self):
         self.tree_param.check()

@@ -28,7 +28,7 @@ import functools
 import copy
 from arch.api.utils import log_utils
 from federatedml.feature.fate_element_type import NoneType
-from operator import add,sub
+from operator import add, sub
 from federatedml.framework.weights import ListWeights, Weights
 import numpy as np
 from typing import List
@@ -197,10 +197,10 @@ class FeatureHistogram(object):
         return batch_histogram.reduce(agg_histogram)
 
     @staticmethod
-    def aggregate_histogram(batch_histogram1:list, batch_histogram2:list,node_map={}):
+    def aggregate_histogram(batch_histogram1: list, batch_histogram2: list, node_map={}):
 
         # histogramBag
-        for bag1,bag2 in zip(batch_histogram1,batch_histogram2):
+        for bag1,bag2 in zip(batch_histogram1, batch_histogram2):
             bag1.add_inplace(bag2)
         return batch_histogram1
 

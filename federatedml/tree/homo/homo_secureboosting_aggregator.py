@@ -3,11 +3,11 @@ from federatedml.util import consts
 from functools import reduce
 from arch.api.utils import log_utils
 from federatedml.framework.weights import DictWeights
-from federatedml.tree.feature_histogram import HistogramBag, FeatureHistogramWeights
-from typing import List,Dict
-from federatedml.optim.convergence import converge_func_factory
+from federatedml.tree import HistogramBag, FeatureHistogramWeights
+from typing import List, Dict
 
 LOGGER = log_utils.getLogger()
+
 
 class SecureBoostArbiterAggregator(object):
 
@@ -77,7 +77,7 @@ class DecisionTreeArbiterAggregator(object):
 
         if self.verbose:
             for hist in agg_histogram._weights:
-                LOGGER.debug('showing aggregated hist{}'.format(hist))
+                LOGGER.debug('showing aggregated hist{}, hid is {}'.format(hist, hist.hid))
 
         return agg_histogram._weights
 

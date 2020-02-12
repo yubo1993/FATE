@@ -1,12 +1,6 @@
 from arch.api.utils import log_utils
 
 import functools
-import copy
-import arch
-from arch.api import session
-from federatedml.protobuf.generated.boosting_tree_model_meta_pb2 import CriterionMeta
-from federatedml.protobuf.generated.boosting_tree_model_meta_pb2 import DecisionTreeModelMeta
-from federatedml.protobuf.generated.boosting_tree_model_param_pb2 import DecisionTreeModelParam
 from federatedml.transfer_variable.transfer_class.homo_decision_tree_transfer_variable import \
     HomoDecisionTreeTransferVariable
 from federatedml.util import consts
@@ -14,20 +8,16 @@ from federatedml.tree import FeatureHistogram
 from federatedml.tree import DecisionTree
 from federatedml.tree import Splitter
 from federatedml.tree import Node
-from federatedml.tree.feature_histogram import HistogramBag
+from federatedml.tree.tree_core.feature_histogram import HistogramBag
 from federatedml.feature.fate_element_type import NoneType
-from federatedml.framework.homo.procedure import aggregator
 
 from arch.api.table.eggroll.table_impl import DTable
 from federatedml.feature.instance import Instance
 from federatedml.param import DecisionTreeParam
 
 import numpy as np
-from typing import List,Dict,Tuple
-from federatedml.tree.splitter import SplitInfo
-import pandas as pd
-
-from federatedml.tree.homo_secureboosting_aggregator import DecisionTreeClientAggregator
+from typing import List, Tuple
+from federatedml.tree.tree_core.splitter import SplitInfo
 
 LOGGER = log_utils.getLogger()
 

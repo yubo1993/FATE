@@ -299,7 +299,6 @@ class HomoSecureBoostingTreeClient(BoostingTree):
                                                                               classes_[0], pred,
                                                                               {"0": 1 - pred, "1": pred}])
             else:
-                # TODO multiclass
                 pass
 
         return predict_result

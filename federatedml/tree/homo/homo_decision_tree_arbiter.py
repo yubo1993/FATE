@@ -1,31 +1,15 @@
-import functools
-import copy
-import arch
-from arch.api import session
-from federatedml.protobuf.generated.boosting_tree_model_meta_pb2 import CriterionMeta
-from federatedml.protobuf.generated.boosting_tree_model_meta_pb2 import DecisionTreeModelMeta
 from federatedml.protobuf.generated.boosting_tree_model_param_pb2 import DecisionTreeModelParam
 from federatedml.transfer_variable.transfer_class.homo_decision_tree_transfer_variable import \
     HomoDecisionTreeTransferVariable
-from federatedml.tree.homo_secureboosting_aggregator import DecisionTreeArbiterAggregator
 from federatedml.util import consts
-from federatedml.tree import FeatureHistogram
 from federatedml.tree import DecisionTree
 from federatedml.tree import Splitter
-from federatedml.tree import Node
-from federatedml.tree.feature_histogram import HistogramBag
-from federatedml.feature.fate_element_type import NoneType
-from federatedml.framework.homo.procedure import aggregator
+from federatedml.tree.tree_core.feature_histogram import HistogramBag
+from federatedml.tree import SplitInfo
 
-from arch.api.table.eggroll.table_impl import DTable
-from federatedml.feature.instance import Instance
-from federatedml.param import DecisionTreeParam
-
-import numpy as np
-from typing import List,Dict,Tuple
-from federatedml.tree.splitter import SplitInfo
+from typing import List
 from arch.api.utils import log_utils
-from federatedml.tree.homo_secureboosting_aggregator import DecisionTreeArbiterAggregator
+from federatedml.tree import DecisionTreeArbiterAggregator
 
 
 LOGGER = log_utils.getLogger()
@@ -53,9 +37,10 @@ class HomoDecisionTreeArbiter(DecisionTree):
         self.sitename = consts.ARBITER
         self.epoch_idx = epoch_idx
         self.tree_idx = tree_idx
+
         # secure aggregator
         self.set_flowid(flow_id)
-        self.aggregator = DecisionTreeArbiterAggregator(transfer_variable=self.transfer_inst, verbose=False)
+        self.aggregator = DecisionTreeArbiterAggregator(transfer_variable=self.transfer_inst, verbose=True)
 
         # stored histogram for faster computation {node_id:histogram_bag}
         self.stored_histograms = {}
@@ -135,12 +120,10 @@ class HomoDecisionTreeArbiter(DecisionTree):
                 for left_hist in all_histograms:
                     self.stored_histograms[left_hist.hid] = left_hist
 
-                # FIXME parallel_partition is stable, let it be a parameter ?
+                # FIXME stable parallel_partitions
                 best_splits = self.federated_find_best_split(all_histograms, parallel_partitions=10)
                 split_info += best_splits
 
-            LOGGER.debug('best_splits found')
-            LOGGER.debug(split_info)
             self.sync_best_splits(split_info, suffix=(dep, self.epoch_idx))
             LOGGER.debug('best_splits_sent')
 
