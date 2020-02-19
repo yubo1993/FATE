@@ -76,6 +76,13 @@ class HeteroDecisionTreeGuest(DecisionTree):
         self.sitename = consts.GUEST
         self.feature_importances_ = {}
 
+        # work mode 0 use guest local hist only, 1 use host hist, 2 use both
+        self.work_mode = 2
+        LOGGER.debug('tree work mode is {}'.format(self.work_mode))
+
+    def set_work_mode(self, work_mode):
+        self.work_mode = work_mode
+
     def set_flowid(self, flowid=0):
         LOGGER.info("set flowid, flowid is {}".format(flowid))
         self.transfer_inst.set_flowid(flowid)
@@ -299,7 +306,10 @@ class HeteroDecisionTreeGuest(DecisionTree):
                 best_gain_host = gain_host_i
                 best_gain_host_idx = i
 
-        if splitinfo_guest_host[0].gain >= best_gain_host - consts.FLOAT_ZERO:
+        # if merge_host_split_only is True, set guest hists are all None
+        if splitinfo_guest_host[0] is not None and \
+                splitinfo_guest_host[0].gain >= best_gain_host - consts.FLOAT_ZERO:
+
             best_splitinfo = splitinfo_guest_host[0]
         else:
             best_splitinfo = splitinfo_guest_host[best_gain_host_idx]
@@ -309,8 +319,13 @@ class HeteroDecisionTreeGuest(DecisionTree):
 
         return best_splitinfo
 
-    def merge_splitinfo(self, splitinfo_guest, splitinfo_host):
-        LOGGER.info("merge splitinfo")
+    def merge_splitinfo(self, splitinfo_guest, splitinfo_host, merge_host_split_only=False):
+
+        LOGGER.info("merge splitinfo, merge_host_split_only is {}".format(merge_host_split_only))
+
+        if merge_host_split_only:
+            splitinfo_guest = [None for i in range(len(splitinfo_host[0]))]
+
         merge_infos = []
         for i in range(len(splitinfo_guest)):
             splitinfo = [splitinfo_guest[i]]
@@ -324,6 +339,9 @@ class HeteroDecisionTreeGuest(DecisionTree):
                                                          partition=self.data_bin._partitions)
         best_splitinfo_table = splitinfo_guest_host_table.mapValues(self.find_best_split_guest_and_host)
         best_splitinfos = [best_splitinfo[1] for best_splitinfo in best_splitinfo_table.collect()]
+
+        LOGGER.debug('merge_info {}'.format(merge_infos))
+        LOGGER.debug('merge_split_info {}'.format(best_splitinfos))
 
         return best_splitinfos
 
@@ -528,6 +546,37 @@ class HeteroDecisionTreeGuest(DecisionTree):
                 real_splitval = self.encode("feature_val", self.bin_split_points[fid][bid], self.tree_[i].id)
                 self.tree_[i].bid = real_splitval
 
+    def compute_best_split_guest(self, node_map: dict, dep: int, batch: int, mode_type=2):
+
+        assert mode_type in [0, 1, 2]
+
+        acc_histograms, final_splitinfo_host, cur_splitinfos = None, None, None
+        if mode_type == 0 or mode_type == 2:
+            acc_histograms = self.get_histograms(node_map=node_map)
+            self.best_splitinfo_guest = self.splitter.find_split(acc_histograms, self.valid_features,
+                                                             self.data_bin._partitions,
+                                                             self.sitename,
+                                                             self.use_missing, self.zero_as_missing)
+            LOGGER.debug('computing local splits done')
+
+        if mode_type == 1 or mode_type == 2:
+            self.federated_find_split(dep, batch)
+            final_splitinfo_host = self.sync_final_split_host(dep, batch)
+
+        if mode_type == 0:
+            LOGGER.debug('use guest splits only')
+            cur_splitinfos = self.best_splitinfo_guest
+        elif mode_type == 1:
+            LOGGER.debug('use host splits only')
+            cur_splitinfos = self.merge_splitinfo(splitinfo_guest=[], splitinfo_host=final_splitinfo_host,
+                                                  merge_host_split_only=True)
+        else:
+            LOGGER.debug('use guest and host splits')
+            cur_splitinfos = self.merge_splitinfo(splitinfo_guest=self.best_splitinfo_guest,
+                                                  splitinfo_host=final_splitinfo_host,
+                                                  merge_host_split_only=False)
+        return cur_splitinfos
+
     def fit(self):
         LOGGER.info("begin to fit guest decision tree")
         self.sync_encrypted_grad_and_hess()
@@ -564,16 +613,7 @@ class HeteroDecisionTreeGuest(DecisionTree):
                     node_map[tree_node.id] = node_num
                     node_num += 1
 
-                acc_histograms = self.get_histograms(node_map=node_map)
-
-                self.best_splitinfo_guest = self.splitter.find_split(acc_histograms, self.valid_features,
-                                                                     self.data_bin._partitions,
-                                                                     self.sitename,
-                                                                     self.use_missing, self.zero_as_missing)
-                self.federated_find_split(dep, batch)
-                final_splitinfo_host = self.sync_final_split_host(dep, batch)
-
-                cur_splitinfos = self.merge_splitinfo(self.best_splitinfo_guest, final_splitinfo_host)
+                cur_splitinfos = self.compute_best_split_guest(node_map, dep, batch, mode_type=self.work_mode)
                 splitinfos.extend(cur_splitinfos)
 
                 batch += 1
@@ -694,6 +734,7 @@ class HeteroDecisionTreeGuest(DecisionTree):
                 predict_result = predict_result.union(predict_leaf)
 
             predict_data = predict_data.subtractByKey(predict_leaf)
+            LOGGER.debug('showing predict data {}'.format(predict_data))
 
             unleaf_node_count = predict_data.count()
 

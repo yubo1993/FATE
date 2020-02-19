@@ -84,6 +84,7 @@ class BoostingTree(ModelBase):
         self.cv_param = boostingtree_param.cv_param
         self.validation_freqs = boostingtree_param.validation_freqs
         self.early_stopping = boostingtree_param.early_stopping
+        self.complete_secure = boostingtree_param.complete_secure
 
         if self.use_missing:
             self.tree_param.use_missing = self.use_missing
@@ -131,7 +132,7 @@ class BoostingTree(ModelBase):
     def gen_feature_fid_mapping(self, schema):
         header = schema.get("header")
         self.feature_name_fid_mapping = dict(zip(range(len(header)), header))
-        print ("self.feature_name_fid_mapping is {}".format(self.feature_name_fid_mapping))
+        print("self.feature_name_fid_mapping is {}".format(self.feature_name_fid_mapping))
         # for i in range(len(header)):
         #     self.feature_name_fid_mapping[header[i]] = i
     

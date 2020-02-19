@@ -70,6 +70,12 @@ class HeteroDecisionTreeHost(DecisionTree):
         self.runtime_idx = 0
         self.sitename = consts.HOST
 
+        # work mode 0 use guest local hist only, 1 use host hist, 2 use both
+        self.work_mode = 2
+
+    def set_work_mode(self, work_mode):
+        self.work_mode = work_mode
+
     def set_flowid(self, flowid=0):
         LOGGER.info("set flowid, flowid is {}".format(flowid))
         self.transfer_inst.set_flowid(flowid)
@@ -426,6 +432,27 @@ class HeteroDecisionTreeHost(DecisionTree):
                           idx=0)
         """
 
+    def compute_best_split_host(self, node_map: dict, dep: int, batch: int, mode_type=2):
+
+        assert mode_type in [0, 1, 2]
+
+        if mode_type == 1 or mode_type == 2:
+            acc_histograms = self.get_histograms(node_map=node_map)
+            splitinfo_host, encrypted_splitinfo_host = self.splitter.find_split_host(acc_histograms,
+                                                                                     self.valid_features,
+                                                                                     self.data_bin._partitions,
+                                                                                     self.sitename,
+                                                                                     self.use_missing,
+                                                                                     self.zero_as_missing)
+
+            self.sync_encrypted_splitinfo_host(encrypted_splitinfo_host, dep, batch)
+            federated_best_splitinfo_host = self.sync_federated_best_splitinfo_host(dep, batch)
+            self.sync_final_splitinfo_host(splitinfo_host, federated_best_splitinfo_host, dep, batch)
+            LOGGER.debug('computing host splits done')
+        else:
+            LOGGER.debug('skip splits computation')
+            pass
+
     def fit(self):
         LOGGER.info("begin to fit host decision tree")
         self.sync_encrypted_grad_and_hess()
@@ -447,18 +474,7 @@ class HeteroDecisionTreeHost(DecisionTree):
                     node_map[tree_node.id] = node_num
                     node_num += 1
 
-                acc_histograms = self.get_histograms(node_map=node_map)
-
-                splitinfo_host, encrypted_splitinfo_host = self.splitter.find_split_host(acc_histograms,
-                                                                                         self.valid_features,
-                                                                                         self.data_bin._partitions,
-                                                                                         self.sitename,
-                                                                                         self.use_missing,
-                                                                                         self.zero_as_missing)
-
-                self.sync_encrypted_splitinfo_host(encrypted_splitinfo_host, dep, batch)
-                federated_best_splitinfo_host = self.sync_federated_best_splitinfo_host(dep, batch)
-                self.sync_final_splitinfo_host(splitinfo_host, federated_best_splitinfo_host, dep, batch)
+                self.compute_best_split_host(node_map=node_map, dep=dep, batch=batch, mode_type=self.work_mode)
 
                 batch += 1
 

@@ -318,8 +318,18 @@ class HeteroSecureBoostingTreeGuest(BoostingTree):
         if self.early_stopping > 0:
             validation_strategy.sync_status = True
 
+        if self.complete_secure:
+            self.num_trees += 1
+            LOGGER.debug('complete secure enabled')
+
         for i in range(self.num_trees):
+
+            LOGGER.debug('epoch idx is {}'.format(i))
             self.compute_grad_and_hess()
+
+            tree_work_mode = 2
+            if self.complete_secure and i == 0:
+                tree_work_mode = 0
 
             for tidx in range(self.tree_dim):
                 tree_inst = HeteroDecisionTreeGuest(self.tree_param)
@@ -334,6 +344,7 @@ class HeteroSecureBoostingTreeGuest(BoostingTree):
                 tree_inst.set_flowid(self.generate_flowid(i, tidx))
                 tree_inst.set_host_party_idlist(self.component_properties.host_party_idlist)
                 tree_inst.set_runtime_idx(self.component_properties.local_partyid)
+                tree_inst.set_work_mode(tree_work_mode)
 
                 tree_inst.fit()
 

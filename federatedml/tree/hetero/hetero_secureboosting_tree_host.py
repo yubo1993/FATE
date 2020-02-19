@@ -58,6 +58,7 @@ class HeteroSecureBoostingTreeHost(BoostingTree):
         self.data_bin = None
         self.role = consts.HOST
         self.cur_best_model = None
+        self.complete_secure = True
 
     def convert_feature_to_bin(self, data_instance):
         LOGGER.info("convert feature to bins")
@@ -117,8 +118,15 @@ class HeteroSecureBoostingTreeHost(BoostingTree):
         if self.early_stopping > 0:
             validation_strategy.sync_status = True
 
+        if self.complete_secure:
+            self.num_trees += 1
+
         for i in range(self.num_trees):
-            # n_tree = []
+
+            tree_work_mode = 2
+            if self.complete_secure and i == 0:
+                tree_work_mode = 0
+
             for tidx in range(self.tree_dim):
                 tree_inst = HeteroDecisionTreeHost(self.tree_param)
 
@@ -129,6 +137,7 @@ class HeteroSecureBoostingTreeHost(BoostingTree):
                 tree_inst.set_flowid(self.generate_flowid(i, tidx))
                 tree_inst.set_runtime_idx(self.component_properties.local_partyid)
                 tree_inst.set_valid_features(valid_features)
+                tree_inst.set_work_mode(tree_work_mode)
 
                 tree_inst.fit()
                 tree_meta, tree_param = tree_inst.get_model()

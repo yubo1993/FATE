@@ -275,7 +275,7 @@ class HomoDecisionTreeClient(DecisionTree):
         assign_method = functools.partial(self.assign_a_instance, tree=tree_node, bin_sparse_point=
                                           self.bin_sparse_points, use_missing=self.use_missing, use_zero_as_missing
                                           =self.zero_as_missing)
-        # FIXME
+
         assign_result = table_with_assignment.mapValues(assign_method)
         leaf_val = assign_result.filter(lambda key, value: isinstance(value, tuple) is False)
 
@@ -402,7 +402,7 @@ class HomoDecisionTreeClient(DecisionTree):
                 return tree[nid].weight
 
             cur_node = tree[nid]
-            fid,bid = cur_node.fid,cur_node.bid
+            fid, bid = cur_node.fid, cur_node.bid
             missing_dir = cur_node.missing_dir
 
             if use_missing and zero_as_missing:
