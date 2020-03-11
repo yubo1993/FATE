@@ -60,14 +60,11 @@ class LocalBaseline(ModelBase):
         return model
 
     def _get_model_param(self):
-        weight_dict = {}
         n_iter = self.model_fit.n_iter_[0]
         is_converged = n_iter < self.model_fit.max_iter
         coef = self.model_fit.coef_[0]
         intercept = self.model_fit.intercept_[0]
-        for idx, header_name in enumerate(self.header):
-            coef_i = coef[idx]
-            weight_dict[header_name] = coef_i
+        weight_dict = dict(zip(self.header, list(coef)))
 
         result = {'iters': n_iter,
                   'is_converged': is_converged,
@@ -79,10 +76,12 @@ class LocalBaseline(ModelBase):
 
     def _get_param(self):
         header = self.header
+        LOGGER.debug("In get_param, header: {}".format(header))
         if header is None:
             param_protobuf_obj = lr_model_param_pb2.LRModelParam()
             return param_protobuf_obj
         result = self._get_model_param()
+        LOGGER.debug("in _get_param, result: {}".format(result))
         param_protobuf_obj = lr_model_param_pb2.LRModelParam(**result)
         return param_protobuf_obj
 
@@ -99,11 +98,14 @@ class LocalBaseline(ModelBase):
         if not self.need_run:
             return
         model_fit = self.model_fit
+        classes = [int(x) for x in model_fit.classes_]
         pred_label = data_instances.mapValues(lambda v: model_fit.predict(v.features[None,:])[0])
         pred_prob = data_instances.mapValues(lambda v: model_fit.predict_proba(v.features[None,:])[0])
+
         predict_result = data_instances.mapValues(lambda x: x.label)
         predict_result = predict_result.join(pred_prob, lambda x, y: (x, y))
-        predict_result = predict_result.join(pred_label, lambda x, y: [x[0], y, x[1][1], {"0": x[1][0], "1": x[1][1]}])
+        predict_result = predict_result.join(pred_label, lambda x, y: [x[0], int(y), x[1][classes.index(y)],
+                                                                       dict(zip(classes, list(x[1])))])
         return predict_result
 
     def fit(self, data_instances, validate_data=None):
@@ -121,6 +123,6 @@ class LocalBaseline(ModelBase):
         y_table = data_instances.mapValues(lambda v: v.label)
 
         X = np.array([v[1] for v in list(X_table.collect())])
-        y = np.array(list(y_table.collect()))[:, 1]
+        y = np.array([v[1] for v in list(y_table.collect())])
 
         self.model_fit = model.fit(X, y)
