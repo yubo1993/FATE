@@ -17,6 +17,20 @@ import sys
 from collections import defaultdict
 import math
 import numpy as np
+import logging
+
+from sklearn.metrics import accuracy_score
+from sklearn.metrics import confusion_matrix
+from sklearn.metrics import explained_variance_score
+from sklearn.metrics import mean_absolute_error
+from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_squared_log_error
+from sklearn.metrics import median_absolute_error
+from sklearn.metrics import r2_score
+from sklearn.metrics import precision_score
+from sklearn.metrics import recall_score
+from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_curve
 
 from arch.api.utils import log_utils
 from fate_flow.entity.metric import Metric, MetricMeta
@@ -24,8 +38,6 @@ from fate_flow.entity.metric import Metric, MetricMeta
 from federatedml.param import EvaluateParam
 from federatedml.util import consts
 from federatedml.model_base import ModelBase
-
-from federatedml.evaluation.metric_interface import Metrics
 
 LOGGER = log_utils.getLogger()
 
@@ -108,7 +120,6 @@ class PerformanceRecorder(object):
 
 
 class Evaluation(ModelBase):
-
     def __init__(self):
         super().__init__()
         self.model_param = EvaluateParam()
@@ -125,23 +136,47 @@ class Evaluation(ModelBase):
         self.save_curve_metric_list = [consts.KS, consts.ROC, consts.LIFT, consts.GAIN, consts.PRECISION, consts.RECALL,
                                        consts.ACCURACY]
 
-        self.metrics = None
+        self.regression_support_func = [
+            # consts.EXPLAINED_VARIANCE,
+            # consts.MEAN_ABSOLUTE_ERROR,
+            # consts.MEAN_SQUARED_ERROR,
+            consts.MEDIAN_ABSOLUTE_ERROR,
+            # consts.R2_SCORE,
+            consts.ROOT_MEAN_SQUARED_ERROR
+        ]
+
+        self.binary_classification_support_func = [
+            consts.AUC,
+            consts.KS,
+            # consts.LIFT,
+            # consts.GAIN,
+            # consts.ACCURACY,
+            # consts.PRECISION,
+            # consts.RECALL,
+            # consts.ROC
+        ]
+
+        self.multi_classification_support_func = [
+            consts.ACCURACY,
+            consts.PRECISION,
+            consts.RECALL
+        ]
+
+        self.metrics = {consts.BINARY: self.binary_classification_support_func,
+                        consts.MULTY: self.multi_classification_support_func,
+                        consts.REGRESSION: self.regression_support_func}
+
         self.round_num = 6
 
         self.validate_key = set()
         self.train_key = set()
-
         self.validate_metric = {}
         self.train_metric = {}
-
-        self.metric_interface = None
 
     def _init_model(self, model):
         self.model_param = model
         self.eval_type = self.model_param.eval_type
         self.pos_label = self.model_param.pos_label
-        self.metrics = model.metrics
-        self.metric_interface = Metrics(self.pos_label, self.eval_type)
 
     def _run_data(self, data_sets=None, stage=None):
         if not self.need_run:
@@ -192,12 +227,14 @@ class Evaluation(ModelBase):
 
         eval_result = defaultdict(list)
 
-        metrics = self.metrics 
-
-        LOGGER.debug('metrics are {}'.format(metrics))
+        if self.eval_type in self.metrics:
+            metrics = self.metrics[self.eval_type]
+        else:
+            LOGGER.warning("Unknown eval_type of {}".format(self.eval_type))
+            metrics = []
 
         for eval_metric in metrics:
-            res = getattr(self.metric_interface, eval_metric)(labels, pred_results)
+            res = getattr(self, eval_metric)(labels, pred_results)
             if res is not None:
                 try:
                     if math.isinf(res):
@@ -312,7 +349,7 @@ class Evaluation(ModelBase):
         -------
         """
 
-        collect_dict = {}
+        collect_dict = None
         LOGGER.debug('callback metric called')
 
         for (data_type, eval_res_list) in self.eval_results.items():
@@ -463,7 +500,7 @@ class Evaluation(ModelBase):
                         LOGGER.warning("Unknown metric:{}".format(metric))
 
         if return_single_val_metrics:
-            if len(self.validate_metric) != 0:
+            if len(self.validate_metric) !=0:
                 LOGGER.debug("return validate metric")
                 return self.validate_metric
             else:
@@ -473,4 +510,3 @@ class Evaluation(ModelBase):
     @staticmethod
     def extract_data(data: dict):
         return data
-
