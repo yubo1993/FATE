@@ -1,4 +1,5 @@
 cachetools==3.0.0
+kazoo==2.6.1
 tensorflow==1.15.2
 pycryptodomex==3.6.6
 gmpy2==2.0.8
