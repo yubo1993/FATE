@@ -38,6 +38,7 @@ script:
   - echo "[INFO] Git clone eggroll submodule source code from ${eggroll_git_url} branch ${eggroll_git_branch}"
   - git clone ${eggroll_git_url} -b ${eggroll_git_branch} eggroll
   - nohup python fate_flow/fate_flow_server.py > fate_flow_start.log &
+  - sleep 10s
   - cat fate_flow_start.log
   - fate_flow_proc=$(ps aux | grep fate_flow_server.py) 
   - bash ./federatedml/test/run_test.sh
