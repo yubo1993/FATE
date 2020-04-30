@@ -41,9 +41,9 @@ script:
   - sleep 10s
   - cat fate_flow_start.log
   - fate_flow_proc=$(ps aux | grep fate_flow_server.py) 
-  - bash ./federatedml/test/run_test.sh
   - cd ./examples/test 
   - python run_test.py default_env.json
+  - bash ../../federatedml/test/run_test.sh
 
 after_success:
   - cd ./federatedml/test && codecov
