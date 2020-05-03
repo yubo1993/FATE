@@ -41,6 +41,12 @@ class Federation(object):
             self._role_to_parties_map[role] = role_parties
             self._all_parties.extend(role_parties)
 
+    def set_default_partitions(self, num: int):
+        raise NotImplementedError()
+
+    def reset_default_partitions(self):
+        raise NotImplementedError()
+
     @property
     def local_party(self):
         return self._local_party

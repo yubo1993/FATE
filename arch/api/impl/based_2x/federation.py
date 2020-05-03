@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import logging
 from typing import Union
 
@@ -52,6 +53,15 @@ class FederationRuntime(Federation):
         self.rpc, self.rsc = init_roll_site_context(runtime_conf, session_id)
         self._loop = asyncio.get_event_loop()
         self.role = runtime_conf.get("local").get("role")
+        self._default_get_partition = None
+
+    def set_default_partitions(self, num: int):
+        if not isinstance(num, int) or num < 0:
+            raise ValueError("num should be a positive integer")
+        self._default_get_partition = num
+
+    def reset_default_partitions(self):
+        self._default_get_partition = None
 
     def get(self, name, tag, parties: Union[Party, list]):
 
@@ -77,8 +87,16 @@ class FederationRuntime(Federation):
 
             LOGGER.info(f'federation got data. name: {name}, tag: {tag}')
             if isinstance(obj, RollPair):
-                rtn.append(obj)
-                rubbish.add_table(obj)
+                # auto repartition
+                if self._default_get_partition is not None:
+                    repartitioned = obj.save_as(name=f"{obj.get_name()}_rep_{self._options}",
+                                                namespace=obj.get_namespace(),
+                                                partition=self._default_get_partition)
+                    rtn.append(repartitioned)
+                    obj.destroy()
+                else:
+                    rtn.append(obj)
+                    rubbish.add_table(obj)
                 if LOGGER.isEnabledFor(logging.DEBUG):
                     LOGGER.debug(f'federation got roll pair with count {obj.count()}, name {name}, tag {tag}')
 

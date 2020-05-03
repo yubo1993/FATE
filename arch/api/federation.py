@@ -108,7 +108,7 @@ def roles_to_parties(roles: list) -> list:
     -------
     list
       list of parties coresponsed to given roles in order
-    """ 
+    """
     return RuntimeInstance.FEDERATION.roles_to_parties(roles)
 
 
@@ -186,3 +186,11 @@ def remote(obj, name: str, tag: str, role=None, idx=-1):
             role = [role]
         dst_nodes = RuntimeInstance.FEDERATION.roles_to_parties(role)
         return RuntimeInstance.FEDERATION.remote(obj=obj, name=name, tag=tag, parties=dst_nodes)
+
+
+def set_default_partitions(num: int):
+    RuntimeInstance.FEDERATION.set_default_partitions(num)
+
+
+def reset_default_partitions():
+    RuntimeInstance.FEDERATION.reset_default_partitions()
