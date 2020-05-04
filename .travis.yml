@@ -16,22 +16,6 @@ matrix:
       language: python
       python: 3.6
 
-install:
-  - |
-    export PATH="/usr/lib/ccache:$PATH"
-    ccache -M 256M && ccache -s
-    sudo apt-get install libgmp-dev libmpfr-dev libmpfi-dev libmpc-dev texlive texlive-latex-extra latexmk
-    pip install Cython --verbose --disable-pip-version-check
-    python setup.py sdist
-    pip install dist/gmpy2-*.tar.gz
-    cat requirements.txt | xargs -n 1 pip install
-    pip install pytest pytest-cov coverage
-    pip install codecov
-    pip install nose
-    pip install sphinx
-before script:
-  - cur_dir=$(pwd)
-  - export PYTHONPATH=$PYTHONPATH:$cur_dir
 script:
   - wget https://webank-ai-1251170195.cos.ap-guangzhou.myqcloud.com/standalone-fate-master-1.4.0.tar.gz
   - tar -xzvf  standalone-fate-master-1.4.0.tar.gz
