@@ -16,7 +16,6 @@ matrix:
       python: 3.6
 
 script:
-  - pip install codecov
   - wget https://webank-ai-1251170195.cos.ap-guangzhou.myqcloud.com/standalone-fate-master-1.4.0.tar.gz
   - tar -xzf  standalone-fate-master-1.4.0.tar.gz 
   - cd standalone-fate-master-1.4.0
@@ -25,6 +24,7 @@ script:
   - ls -alh
   - bash ./federatedml/test/run_test.sh
 after_success:
-  - unset PYTHONPATH && cd ./federatedml/test && codecov
+  - conda install -c conda-forge codecov --yes
+  - cd ./federatedml/test && codecov
 
 
