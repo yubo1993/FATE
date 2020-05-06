@@ -22,6 +22,7 @@ script:
   - ls -alh
   - bash ./federatedml/test/run_test.sh
 after_success:
+  - unset PYTHONPATH
   - pip install codecov
   - cd ./federatedml/test && codecov
 
