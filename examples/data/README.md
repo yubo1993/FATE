@@ -28,10 +28,6 @@ Data for running example tasks. Many of the data sets have been scaled or transf
 - 30 features
 - [source](https://www.kaggle.com/uciml/breast-cancer-wisconsin-data)
 
-#### breast_step:
-- 7 features
-- [source](https://www.kaggle.com/uciml/breast-cancer-wisconsin-data)
-
 #### default_credit:
 - 23 features
 - [source](https://archive.ics.uci.edu/ml/datasets/default+of+credit+card+clients)
@@ -46,10 +42,6 @@ Data for running example tasks. Many of the data sets have been scaled or transf
 
 #### motor_mini:
 - 11 features
-- [source](https://www.kaggle.com/wkirgsn/electric-motor-temperature)
-
-#### motor_mini_step:
-- 7 features
 - [source](https://www.kaggle.com/wkirgsn/electric-motor-temperature)
 
 #### student-mat:
