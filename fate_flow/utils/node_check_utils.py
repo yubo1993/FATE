@@ -19,6 +19,7 @@ import requests
 from flask import request
 
 from fate_flow.settings import CHECK_NODES_IDENTITY, MANAGER_HOST, MANAGER_PORT, FATE_MANAGER_NODE_CHECK
+from fate_flow.utils.job_utils import get_federatedId
 
 
 def check_nodes(func):
@@ -41,13 +42,15 @@ def check_nodes(func):
     return _wrapper
 
 
-def nodes_check(src_party_id, src_role, appKey, appSecret):
+def nodes_check(src_party_id, src_role, appKey, appSecret, dst_party_id):
     if CHECK_NODES_IDENTITY:
         body = {
-            'partyId': src_party_id,
+            'srcPartyId': src_party_id,
             'role': src_role,
             'appKey': appKey,
-            'appSecret': appSecret
+            'appSecret': appSecret,
+            'dstPartyId': dst_party_id,
+            'federatedId': get_federatedId()
         }
         try:
             response = requests.post(url="http://{}:{}{}".format(MANAGER_HOST, MANAGER_PORT, FATE_MANAGER_NODE_CHECK), json=body).json()

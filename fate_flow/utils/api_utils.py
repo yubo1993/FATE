@@ -25,6 +25,7 @@ from fate_flow.settings import DEFAULT_GRPC_OVERALL_TIMEOUT, CHECK_NODES_IDENTIT
 from fate_flow.settings import stat_logger, HEADERS
 from fate_flow.utils.grpc_utils import wrap_grpc_packet, get_proxy_data_channel
 from fate_flow.entity.runtime_config import RuntimeConfig
+from fate_flow.utils.job_utils import get_federatedId
 
 
 def get_json_result(retcode=0, retmsg='success', data=None, job_id=None, meta=None):
@@ -105,11 +106,13 @@ def request_execute_server(request, execute_host):
 
 def get_node_identity(json_body, src_party_id):
     params = {
-        'partyId': src_party_id
+        'partyId': src_party_id,
+        'federatedId': get_federatedId()
     }
     try:
         response = requests.get(url="http://{}:{}{}".format(MANAGER_HOST, MANAGER_PORT, FATE_MANAGER_GET_NODE_INFO), params=params)
         json_body['appKey'] = response.json().get('data').get('appKey')
         json_body['appSecret'] = response.json().get('data').get('appSecret')
+        json_body['_src_role'] = response.json().get('data').get('role')
     except Exception as e:
         raise Exception('get appkey and secret failed: {}'.format(str(e)))
