@@ -16,10 +16,11 @@
 import functools
 
 import requests
+from arch.api.utils import file_utils
 from flask import request
 
-from fate_flow.settings import CHECK_NODES_IDENTITY, MANAGER_HOST, MANAGER_PORT, FATE_MANAGER_NODE_CHECK
-from fate_flow.utils.job_utils import get_federatedId
+from fate_flow.settings import CHECK_NODES_IDENTITY, MANAGER_HOST, MANAGER_PORT, FATE_MANAGER_NODE_CHECK, \
+    SERVER_CONF_PATH
 
 
 def check_nodes(func):
@@ -50,7 +51,7 @@ def nodes_check(src_party_id, src_role, appKey, appSecret, dst_party_id):
             'appKey': appKey,
             'appSecret': appSecret,
             'dstPartyId': dst_party_id,
-            'federatedId': get_federatedId()
+            'federatedId': file_utils.load_json_conf_real_time(SERVER_CONF_PATH).get('fatemanager', {}).get('federatedId')
         }
         try:
             response = requests.post(url="http://{}:{}{}".format(MANAGER_HOST, MANAGER_PORT, FATE_MANAGER_NODE_CHECK), json=body).json()

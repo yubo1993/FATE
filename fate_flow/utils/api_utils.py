@@ -16,16 +16,16 @@
 import json
 
 import requests
+from arch.api.utils import file_utils
 from flask import jsonify
 from flask import Response
 
 from fate_flow.entity.constant_config import WorkMode
 from fate_flow.settings import DEFAULT_GRPC_OVERALL_TIMEOUT, CHECK_NODES_IDENTITY, MANAGER_HOST, MANAGER_PORT, \
-    FATE_MANAGER_GET_NODE_INFO
+    FATE_MANAGER_GET_NODE_INFO, SERVER_CONF_PATH
 from fate_flow.settings import stat_logger, HEADERS
 from fate_flow.utils.grpc_utils import wrap_grpc_packet, get_proxy_data_channel
 from fate_flow.entity.runtime_config import RuntimeConfig
-from fate_flow.utils.job_utils import get_federatedId
 
 
 def get_json_result(retcode=0, retmsg='success', data=None, job_id=None, meta=None):
@@ -107,7 +107,7 @@ def request_execute_server(request, execute_host):
 def get_node_identity(json_body, src_party_id):
     params = {
         'partyId': src_party_id,
-        'federatedId': get_federatedId()
+        'federatedId': file_utils.load_json_conf_real_time(SERVER_CONF_PATH).get('fatemanager', {}).get('federatedId')
     }
     try:
         response = requests.get(url="http://{}:{}{}".format(MANAGER_HOST, MANAGER_PORT, FATE_MANAGER_GET_NODE_INFO), params=params)

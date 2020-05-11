@@ -36,7 +36,7 @@ from fate_flow.db.db_models import DB, Job, Task, DataView
 from fate_flow.driver.dsl_parser import DSLParser
 from fate_flow.entity.runtime_config import RuntimeConfig
 from fate_flow.manager.data_manager import query_data_view, delete_table, delete_metric_data
-from fate_flow.settings import stat_logger, JOB_DEFAULT_TIMEOUT, SERVER_CONF_PATH
+from fate_flow.settings import stat_logger, JOB_DEFAULT_TIMEOUT
 from fate_flow.utils import detect_utils
 from fate_flow.utils import api_utils
 from flask import request, redirect, url_for
@@ -541,6 +541,4 @@ def query_job_info(job_id):
     return role, party_id
 
 
-def get_federatedId():
-    return file_utils.load_json_conf_real_time(SERVER_CONF_PATH).get('fatemanager', {}).get('federatedId')
 
