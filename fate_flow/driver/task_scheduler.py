@@ -386,6 +386,9 @@ class TaskScheduler(object):
                 if response_json["retcode"]:
                     sync_status = False
         if re_run_time and not sync_status:
+            if not (isinstance(re_run_time, int) and re_run_time>0):
+                re_run_time = 120
+                schedule_logger(job_id).info('re_run_time set {}'.format(re_run_time))
             schedule_logger(job_id).info('job {} run failed, Try to run again after {} seconds'.format(job_id, re_run_time))
             time.sleep(re_run_time)
             job = job_utils.query_job(job_id=job_id)[0]
