@@ -29,7 +29,7 @@ WORK_MODE = 0
 USE_LOCAL_DATABASE = True
 
 # upload data
-USE_LOCAL_DATA = True
+USE_LOCAL_DATA = False
 
 # Local authentication switch
 USE_AUTHENTICATION = False
