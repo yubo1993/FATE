@@ -20,7 +20,7 @@ from arch.api.utils import file_utils
 from flask import request
 
 from fate_flow.settings import CHECK_NODES_IDENTITY, MANAGER_HOST, MANAGER_PORT, FATE_MANAGER_NODE_CHECK, \
-    SERVER_CONF_PATH
+    SERVER_CONF_PATH, SERVERS
 
 
 def check_nodes(func):
@@ -46,12 +46,12 @@ def check_nodes(func):
 def nodes_check(src_party_id, src_role, appKey, appSecret, dst_party_id):
     if CHECK_NODES_IDENTITY:
         body = {
-            'srcPartyId': src_party_id,
+            'srcPartyId': int(src_party_id),
             'role': src_role,
             'appKey': appKey,
             'appSecret': appSecret,
-            'dstPartyId': dst_party_id,
-            'federatedId': file_utils.load_json_conf_real_time(SERVER_CONF_PATH).get('fatemanager', {}).get('federatedId')
+            'dstPartyId': int(dst_party_id),
+            'federatedId': file_utils.load_json_conf_real_time(SERVER_CONF_PATH).get(SERVERS).get('fatemanager', {}).get('federatedId')
         }
         try:
             response = requests.post(url="http://{}:{}{}".format(MANAGER_HOST, MANAGER_PORT, FATE_MANAGER_NODE_CHECK), json=body).json()
