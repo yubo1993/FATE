@@ -19,7 +19,7 @@ import os
 import shutil
 import tarfile
 
-from flask import Flask, request, send_file
+from flask import Flask, request, send_file, make_response
 from google.protobuf import json_format
 
 from arch.api.utils.core_utils import deserialize_b64
@@ -63,6 +63,21 @@ def job_view():
     else:
         return get_json_result(retcode=101, retmsg='error')
 
+
+@manager.route('/component/log', methods=['post'])
+@job_utils.job_server_routing(307)
+def component_info_log():
+    job_id = request.json.get('job_id', '')
+    role = request.json.get('role')
+    party_id = request.json.get('party_id')
+    job_log_dir = job_utils.get_job_log_directory(job_id=job_id)
+    file_name = os.path.join(job_log_dir, role, str(party_id), 'INFO.log')
+    if os.path.exists(file_name):
+        return send_file(open(file_name, 'rb'), attachment_filename='{}_{}_{}_INFO.log'.format(job_id, role, party_id), as_attachment=True)
+    else:
+        response = make_response("no find log file")
+        response.status = '500'
+        return response
 
 @manager.route('/component/metric/all', methods=['post'])
 def component_metric_all():
@@ -210,9 +225,10 @@ def component_output_data():
             data_line, have_data_label = get_component_output_data_line(src_key=k, src_value=v)
             output_data.append(data_line)
             num -= 1
+        total = output_data_table.count()
     if output_data:
         header = get_component_output_data_meta(output_data_table=output_data_table, have_data_label=have_data_label)
-        return get_json_result(retcode=0, retmsg='success', data=output_data, meta={'header': header})
+        return get_json_result(retcode=0, retmsg='success', data=output_data, meta={'header': header, 'total': total})
     else:
         return get_json_result(retcode=0, retmsg='no data', data=[])
 

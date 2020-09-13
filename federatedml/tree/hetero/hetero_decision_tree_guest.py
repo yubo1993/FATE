@@ -485,7 +485,7 @@ class HeteroDecisionTreeGuest(DecisionTree):
         """
         return dispatch_node_host_result
 
-    def redispatch_node(self, dep=-1):
+    def redispatch_node(self, dep=-1, max_depth_reach=False):
         LOGGER.info("redispatch node of depth {}".format(dep))
         dispatch_node_method = functools.partial(self.dispatch_node,
                                                  tree_=self.tree_,
@@ -510,6 +510,9 @@ class HeteroDecisionTreeGuest(DecisionTree):
         else:
             self.predict_weights = self.predict_weights.union(leaf)
 
+        if max_depth_reach:
+            return
+
         dispatch_guest_result = dispatch_guest_result.subtractByKey(leaf)
 
         self.sync_dispatch_node_host(dispatch_to_host_result, dep)
@@ -526,10 +529,23 @@ class HeteroDecisionTreeGuest(DecisionTree):
                                                                      unleaf_state_nodeid1) == 2 else unleaf_state_nodeid2)
         self.node_dispatch = self.node_dispatch.union(dispatch_guest_result)
 
+    def remove_sensitive_info(self):
+        """
+        host is not allowed to get weights/g/h
+        """
+        new_tree_ = copy.deepcopy(self.tree_)
+        for node in new_tree_:
+            node.weight = None
+            node.sum_grad = None
+            node.sum_hess = None
+
+        return new_tree_
+
     def sync_tree(self):
         LOGGER.info("sync tree to host")
 
-        self.transfer_inst.tree.remote(self.tree_,
+        tree_nodes = self.remove_sensitive_info()
+        self.transfer_inst.tree.remote(tree_nodes,
                                        role=consts.HOST,
                                        idx=-1)
         """
@@ -601,10 +617,17 @@ class HeteroDecisionTreeGuest(DecisionTree):
 
                 batch += 1
 
-            max_depth_reach = True if dep + 1 == self.max_depth else False
-            self.update_tree_node_queue(splitinfos, max_depth_reach)
+            self.update_tree_node_queue(splitinfos, False)
 
             self.redispatch_node(dep)
+
+        if self.tree_node_queue:
+            self.update_tree_node_queue([], True)
+            self.data_bin_with_node_dispatch = self.data_bin.join(self.node_dispatch,
+                                                                  lambda data_inst, dispatch_info: (
+                                                                      data_inst, dispatch_info))
+
+            self.redispatch_node(self.max_depth, max_depth_reach=True)
 
         self.sync_tree()
         self.convert_bin_to_real()

@@ -33,11 +33,11 @@ GUEST = 'guest'
 HOST = 'host'
 
 # You can set up your own configuration files here
-# DSL_PATH = 'hetero_logistic_regression/test_hetero_lr_train_job_dsl.json'
-# SUBMIT_CONF_PATH = 'hetero_logistic_regression/test_hetero_lr_train_job_conf.json'
+DSL_PATH = 'hetero_logistic_regression/test_hetero_lr_train_job_dsl.json'
+SUBMIT_CONF_PATH = 'hetero_logistic_regression/test_hetero_lr_train_job_conf.json'
 
-DSL_PATH = 'homo_logistic_regression/test_homolr_train_job_dsl.json'
-SUBMIT_CONF_PATH = 'homo_logistic_regression/test_homolr_train_job_conf.json'
+# DSL_PATH = 'homo_logistic_regression/test_homolr_train_job_dsl.json'
+# SUBMIT_CONF_PATH = 'homo_logistic_regression/test_homolr_train_job_conf.json'
 
 TEST_PREDICT_CONF = HOME_DIR + '/test_predict_conf.json'
 
@@ -46,10 +46,10 @@ TASK = 'train'
 # TASK = 'predict'
 
 # Put your data to /examples/data folder and indicate the data names here
-# GUEST_DATA_SET = 'breast_b.csv'
-# HOST_DATA_SET = 'breast_a.csv'
-GUEST_DATA_SET = 'default_credit_homo_guest.csv'
-HOST_DATA_SET = 'default_credit_homo_host.csv'
+GUEST_DATA_SET = 'breast_hetero_guest.csv'
+HOST_DATA_SET = 'breast_hetero_host.csv'
+# GUEST_DATA_SET = 'default_credit_homo_guest.csv'
+# HOST_DATA_SET = 'default_credit_homo_host.csv'
 
 
 # Define your party ids here
@@ -110,7 +110,9 @@ def exec_upload_task(config_dict, role):
                              "-f",
                              "upload",
                              "-c",
-                             config_path],
+                             config_path,
+                             "-drop",
+                             "1"],
                             shell=False,
                             stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT)
@@ -180,11 +182,10 @@ def job_status_checker(jobid):
     for component_stats in check_data:
         status = component_stats['f_status']
         task_status.append(status)
-
     if any([s == FAIL for s in task_status]):
         return FAIL
 
-    if any([s == RUNNING for s in task_status]):
+    if any([s in [RUNNING, 'waiting'] for s in task_status]):
         return RUNNING
 
     return SUCCESS
@@ -221,7 +222,7 @@ def generate_data_info(role):
         table_name = '_'.join(table_name_list[:-1])
     else:
         table_name = data_name
-    table_name_space = '{}_{}'.format(table_name, role)
+    table_name_space = "experiment"
     return table_name, table_name_space
 
 
@@ -370,11 +371,11 @@ if __name__ == '__main__':
     try:
         args = parser.parse_args()
         upload_data()
-        if TASK == 'train' and args.role == GUEST:
+        if args.role == HOST:
+            pass
+        elif TASK == 'train':
             submit_job()
         else:
-            if args.role == HOST:
-                raise ValueError("Predict task can be initialed by guest only")
             predict_task()
 
     except Exception as e:
